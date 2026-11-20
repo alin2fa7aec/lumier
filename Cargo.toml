@@ -1,0 +1,11 @@
+[workspace]
+members = ["crates/museum-core", "crates/museum-server"]
+resolver = "3"
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace.dependencies]
+museum-core = { path = "crates/museum-core" }

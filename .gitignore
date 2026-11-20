@@ -1,0 +1,6 @@
+/target
+/web/dist
+/web/node_modules
+# Fixtures from tools/make-sample-images.mjs
+/sample-photos
+.local/

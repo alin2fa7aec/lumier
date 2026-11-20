@@ -1,0 +1,21 @@
+# Manifest for the generated fixtures, so a fresh checkout runs without the
+# real library:
+#
+#   for d in hall north south east; do node tools/make-sample-images.mjs sample-photos/$d 12; done
+#   cargo run --bin lumier -- serve --root sample-photos --manifest "$PWD/museum.sample.yaml"
+#
+# Two doors at the hall's right end show a branch; east hangs off north to give
+# the floor plan a second column.
+version: 1
+entrance: hall
+
+rooms:
+  - { id: hall, name: Hall, path: hall }
+  - { id: north, name: North Wing, path: north }
+  - { id: south, name: South Wing, path: south }
+  - { id: east, name: East Gallery, path: east }
+
+doors:
+  - { from: hall, to: north, side: right }
+  - { from: hall, to: south, side: right }
+  - { from: north, to: east, side: right }
