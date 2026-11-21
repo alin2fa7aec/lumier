@@ -71,7 +71,9 @@ to this machine.
 `tools/dev.sh` is the one-command way to check the app in a browser: it
 generates the fixtures if missing, starts the API server, waits for it to
 listen, then runs Vite on :5173; Ctrl-C stops both. `LUMIER_ROOT` and
-`LUMIER_MANIFEST` point it at another library. Claude Code's Bash sandbox gives
+`LUMIER_MANIFEST` point it at another library. `--lan` also serves Vite
+on the LAN for checking from a phone; only 5173 is exposed, lumier stays on
+127.0.0.1 behind Vite's proxy, and the NixOS firewall has to let 5173 in. Claude Code's Bash sandbox gives
 each command a private network, so a server started there is unreachable from
 the browser; run the script from your own terminal.
 

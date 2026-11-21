@@ -7,8 +7,25 @@
 # Defaults to the generated fixtures, creating them on the first run. Point it
 # at another library with LUMIER_ROOT and LUMIER_MANIFEST (absolute, or relative
 # to the repository root).
+#
+#   bash tools/dev.sh --lan
+#
+# also serves Vite on the LAN, for checking from a phone. Only Vite's port 5173
+# is exposed: lumier itself stays on 127.0.0.1 and the phone reaches it through
+# Vite's proxy. There is no authentication, so anyone on the network can browse
+# the library while it runs, and the host's firewall must let 5173 in.
 
 set -euo pipefail
+
+vite_args=(--strictPort)
+case ${1:-} in
+  '') ;;
+  --lan) vite_args+=(--host) ;;
+  *)
+    echo "usage: bash tools/dev.sh [--lan]" >&2
+    exit 2
+    ;;
+esac
 
 repo=$(cd "$(dirname "$0")/.." && pwd)
 cd "$repo"
@@ -44,4 +61,4 @@ for _ in $(seq 100); do
 done
 
 cd web
-npm run dev -- --strictPort
+npm run dev -- "${vite_args[@]}"
