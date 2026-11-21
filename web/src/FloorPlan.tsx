@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight, MapPin } from 'lucide-react'
 import { useMemo } from 'react'
 
 import { imageUrl, type Museum, type MuseumRoom } from './api'
@@ -23,29 +24,33 @@ export function FloorPlan({
   onClose: () => void
 }) {
   const columns = useMemo(() => groupByDepth(museum), [museum])
+  // Which end of the current wall leads to each neighbouring room. A room can
+  // be behind doors at both ends.
   const adjacent = useMemo(() => {
+    const sides = new Map<string, Sides>()
     const current = museum.rooms.find((room) => room.id === currentRoomId)
-    if (current === undefined) return new Set<string>()
-    return new Set([...current.doors.left, ...current.doors.right].map((door) => door.to))
+    if (current === undefined) return sides
+    const mark = (to: string, side: keyof Sides) => {
+      const entry = sides.get(to) ?? { left: false, right: false }
+      entry[side] = true
+      sides.set(to, entry)
+    }
+    for (const door of current.doors.left) mark(door.to, 'left')
+    for (const door of current.doors.right) mark(door.to, 'right')
+    return sides
   }, [museum, currentRoomId])
 
   return (
     <div className="plan" role="dialog" aria-modal="true" aria-label="見取り図" onClick={onClose}>
       <div className="plan__columns" onClick={(event) => event.stopPropagation()}>
         {columns.map((column) => (
-          <section className="plan__column" key={column.label}>
-            <h2 className="plan__depth">{column.label}</h2>
+          <section className="plan__column" key={column.key}>
             {column.rooms.map((room) => (
               <RoomCard
                 key={room.id}
                 room={room}
-                state={
-                  room.id === currentRoomId
-                    ? 'here'
-                    : adjacent.has(room.id)
-                      ? 'adjacent'
-                      : 'elsewhere'
-                }
+                here={room.id === currentRoomId}
+                doorSides={room.id === currentRoomId ? undefined : adjacent.get(room.id)}
                 onPick={() => {
                   jumpToRoom(room.id)
                   onClose()
@@ -62,17 +67,34 @@ export function FloorPlan({
   )
 }
 
+type Sides = { left: boolean; right: boolean }
+
+/// Where the room stands relative to the visitor is shown with marks rather
+/// than words: a pin for the room you are in, and for a neighbour the same
+/// chevrons the wall's doors use, pointing at the end of the current wall
+/// whose door leads there. The words stay in the tooltip and accessible name.
 function RoomCard({
   room,
-  state,
+  here,
+  doorSides,
   onPick,
 }: {
   room: MuseumRoom
-  state: 'here' | 'adjacent' | 'elsewhere'
+  here: boolean
+  doorSides: Sides | undefined
   onPick: () => void
 }) {
+  const state = here ? 'here' : doorSides !== undefined ? 'adjacent' : 'elsewhere'
+  const doorLabel =
+    doorSides === undefined
+      ? ''
+      : doorSides.left && doorSides.right
+        ? '左右の扉の先'
+        : doorSides.left
+          ? '左の扉の先'
+          : '右の扉の先'
   return (
-    <button type="button" className={`card card--${state}`} onClick={onPick} aria-current={state === 'here'}>
+    <button type="button" className={`card card--${state}`} onClick={onPick} aria-current={here}>
       {room.cover !== null ? (
         <img
           className="card__cover"
@@ -85,17 +107,27 @@ function RoomCard({
       ) : (
         <span className="card__cover card__cover--empty" aria-hidden="true" />
       )}
-      <span className="card__name">{room.name}</span>
-      <span className="card__meta">
-        {state === 'here' && <span className="card__badge">現在地</span>}
-        {state === 'adjacent' && <span className="card__badge card__badge--near">扉の先</span>}
-        {room.image_count > 0 ? `${room.image_count} 点` : '通路'}
+      <span className="card__caption">
+        <span className="card__name">{room.name}</span>
+        {here && (
+          <span className="card__mark" role="img" aria-label="現在地" title="現在地">
+            <MapPin aria-hidden="true" />
+          </span>
+        )}
+        {doorSides !== undefined && (
+          <span className="card__mark" role="img" aria-label={doorLabel} title={doorLabel}>
+            {doorSides.left && <ChevronLeft aria-hidden="true" />}
+            {doorSides.right && <ChevronRight aria-hidden="true" />}
+          </span>
+        )}
       </span>
     </button>
   )
 }
 
-type Column = { label: string; rooms: MuseumRoom[] }
+/// Columns carry no heading: their order already says how far each room is,
+/// and the visitor needs where to go, not the count of doors.
+type Column = { key: string; rooms: MuseumRoom[] }
 
 /// Breadth-first from the entrance over directed door edges, since a door is
 /// one-way unless the manifest made it reciprocal.
@@ -133,15 +165,12 @@ function groupByDepth(museum: Museum): Column[] {
 
   const columns: Column[] = [...byDepth.entries()]
     .sort(([a], [b]) => a - b)
-    .map(([depth, rooms]) => ({
-      label: depth === 0 ? 'エントランス' : `${depth} 手`,
-      rooms,
-    }))
+    .map(([depth, rooms]) => ({ key: `depth-${depth}`, rooms }))
 
   // `lumier check` warns about these, but the plan must still offer a way in:
-  // a jump is the only way to reach them.
+  // a jump is the only way to reach them. They go last.
   if (unreachable.length > 0) {
-    columns.push({ label: '扉では到達不可', rooms: unreachable })
+    columns.push({ key: 'unreachable', rooms: unreachable })
   }
   return columns
 }

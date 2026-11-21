@@ -68,7 +68,16 @@ The real screenshot library `ss/` and its `museum.ss.yaml`, which the
 measurements below were taken on, were not carried over when the project moved
 to this machine.
 
+`tools/dev.sh` is the one-command way to check the app in a browser: it
+generates the fixtures if missing, starts the API server, waits for it to
+listen, then runs Vite on :5173; Ctrl-C stops both. `LUMIER_ROOT` and
+`LUMIER_MANIFEST` point it at another library. Claude Code's Bash sandbox gives
+each command a private network, so a server started there is unreachable from
+the browser; run the script from your own terminal.
+
 ```sh
+bash tools/dev.sh               # then browse http://localhost:5173
+
 # Validate the manifest; exits 1 on errors
 cargo run --bin lumier -- check --root sample-photos --manifest "$PWD/museum.sample.yaml"
 
@@ -164,9 +173,10 @@ GET /img/{image_id}/{size}  Image bytes. `size` is 320|640|1280|2560 (WebP, long
 GET /*                      Falls back to index.html when --web-dir is set.
 ```
 
-A door carries `peek`, the first image id of its destination. The frontend does
-not render it yet — without thumbnails a door peek would pull a full-size
-original, and a wall end with several doors would pull several.
+A door carries `peek`, the first image of its destination. The frontend does
+not render it, deliberately: a door is drawn as plain text, the room name and an
+arrow, with no hover motion, so the pictures stay the only thing to look at
+(`docs/design.md` §2). Bringing the glimpse back is a frontend-only change.
 
 An image carries `w`, `h` and `v`. **`w`/`h` are the displayed dimensions, with
 EXIF orientation already applied** — browsers rotate a quarter-turned photo when

@@ -1,3 +1,5 @@
+// Renamed so it does not shadow the global Map.
+import { Map as MapIcon } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { fetchMuseum, fetchRoom, type Museum, type Room } from './api'
@@ -102,10 +104,6 @@ export default function App() {
 
       <header className="plaque">
         <h1>{room.name}</h1>
-        <p>
-          {room.images.length > 0 ? `${room.images.length} 点` : '通路'}
-          {museum !== null && ` · 全 ${museum.rooms.length} 室`}
-        </p>
       </header>
 
       <button
@@ -113,8 +111,13 @@ export default function App() {
         className="plan-button"
         onClick={() => setOverlay({ kind: 'plan' })}
         // The shortcut is the quick way in; the button is how anyone finds it.
+        // A map icon alone says what it opens; the name and the shortcut live
+        // in the tooltip and the accessible name.
+        aria-label="見取り図"
+        aria-keyshortcuts="M"
+        title="見取り図 (M)"
       >
-        見取り図 <kbd>M</kbd>
+        <MapIcon aria-hidden="true" />
       </button>
 
       {showing?.kind === 'plan' && museum !== null && (

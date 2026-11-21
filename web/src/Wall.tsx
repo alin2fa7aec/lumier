@@ -1,3 +1,4 @@
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
 import { imageUrl, pickRendition, type Door, type Room } from './api'
@@ -159,22 +160,13 @@ function DoorGroup({ doors, side }: { doors: Door[]; side: 'left' | 'right' }) {
           key={door.to}
           onClick={() => enterRoom(door.to, side === 'right' ? 'start' : 'end')}
         >
-          {door.peek !== null && (
-            // A glimpse of the far side. The smallest rendition is plenty —
-            // it sits behind the plaque and is cropped to the opening.
-            <img
-              className="door__peek"
-              src={imageUrl(door.peek, 320)}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              draggable={false}
-            />
+          {side === 'left' && (
+            <ChevronLeft className="door__arrow" aria-hidden="true" />
           )}
-          <span className="door__arrow" aria-hidden="true">
-            {side === 'right' ? '→' : '←'}
-          </span>
           <span className="door__name">{door.name}</span>
+          {side === 'right' && (
+            <ChevronRight className="door__arrow" aria-hidden="true" />
+          )}
         </button>
       ))}
     </nav>
