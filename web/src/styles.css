@@ -255,6 +255,39 @@ body {
   place-items: center;
   padding: clamp(1rem, 4vw, 3rem);
   cursor: zoom-out;
+  /* One-finger drags are the swipe gestures in Lightbox.tsx; two-finger
+     pinches stay with the browser, so the picture can still be zoomed. */
+  touch-action: pinch-zoom;
+}
+
+/* The incoming picture slides in from the side it was pushed from. */
+.lightbox__image--from-right {
+  animation: lightbox-from-right 220ms ease-out;
+}
+
+.lightbox__image--from-left {
+  animation: lightbox-from-left 220ms ease-out;
+}
+
+@keyframes lightbox-from-right {
+  from {
+    transform: translateX(3rem);
+    opacity: 0;
+  }
+}
+
+@keyframes lightbox-from-left {
+  from {
+    transform: translateX(-3rem);
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lightbox__image--from-right,
+  .lightbox__image--from-left {
+    animation: none;
+  }
 }
 
 .lightbox__image {
