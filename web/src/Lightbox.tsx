@@ -1,3 +1,4 @@
+import { Play } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 
 import { imageUrl, type Room } from './api'
@@ -33,11 +34,15 @@ export function Lightbox({
   index,
   onMove,
   onClose,
+  onPlay,
 }: {
   room: Room
   index: number
   onMove: (index: number) => void
   onClose: () => void
+  /// Starts the slideshow from this picture. Absent until the floor plan has
+  /// loaded, since the slideshow walks the whole museum.
+  onPlay?: () => void
 }) {
   const image = room.images[index]
   const last = room.images.length - 1
@@ -207,6 +212,21 @@ export function Lightbox({
           {image.w}×{image.h} · {index + 1} / {room.images.length}
         </span>
       </p>
+      {onPlay !== undefined && (
+        <button
+          type="button"
+          className="lightbox__close lightbox__play"
+          onClick={(event) => {
+            event.stopPropagation()
+            onPlay()
+          }}
+          aria-label="スライドショー"
+          aria-keyshortcuts="P"
+          title="スライドショー (P)"
+        >
+          <Play aria-hidden="true" />
+        </button>
+      )}
       <button type="button" className="lightbox__close" onClick={onClose} aria-label="閉じる">
         ×
       </button>

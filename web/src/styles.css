@@ -340,6 +340,92 @@ body {
   background: #ffffff2b;
 }
 
+/* Beside the close button, in the same round frame. */
+.lightbox__play {
+  inset: 1rem 4rem auto auto;
+}
+
+.lightbox__close svg {
+  width: 1.125rem;
+  height: 1.125rem;
+  stroke-width: 1.75;
+}
+
+/* ---- the slideshow ---- */
+
+/* Opaque, unlike the lightbox: a photo frame shows the picture and nothing
+   of the wall behind it. */
+.slideshow {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  background: #000;
+}
+
+.slideshow--asleep {
+  cursor: none;
+}
+
+/* Both pictures share one grid cell, so the outgoing one sits exactly under
+   the incoming one while they cross. The cell is pinned to the screen: left
+   as an auto row, a percentage height has nothing to resolve against, the
+   picture keeps its natural height, and a portrait one on a landscape screen
+   is cut off top and bottom instead of letterboxed. */
+.slideshow__stage {
+  height: 100%;
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+}
+
+.slideshow__image {
+  grid-area: 1 / 1;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  object-fit: contain;
+}
+
+.slideshow__image--incoming {
+  animation: slideshow-fade-in 1s ease both;
+}
+
+.slideshow__image--outgoing {
+  animation: slideshow-fade-out 1s ease both;
+}
+
+@keyframes slideshow-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes slideshow-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slideshow__image--incoming {
+    animation: none;
+  }
+
+  /* Without the fade there is no animationend to remove it by. */
+  .slideshow__image--outgoing {
+    display: none;
+  }
+}
+
+.slideshow__controls {
+  transition: opacity 400ms ease;
+}
+
+.slideshow--asleep .slideshow__controls {
+  opacity: 0;
+  pointer-events: none;
+}
+
 /* ---- the floor plan ---- */
 
 /* Columns are distance from the entrance, and the whole thing scrolls
@@ -476,8 +562,65 @@ body {
   color: var(--ink);
 }
 
+/* Stacked above the floor plan button. */
+.play-button {
+  inset: auto 1.5rem calc(1.75rem + 2.75rem + 0.75rem) auto;
+}
+
 .plan-button svg {
   width: 1.25rem;
   height: 1.25rem;
   stroke-width: 1.75;
+}
+
+/* Left of the pause button: a pill holding a native dropdown, so phones get
+   their own picker. The select is stripped to its text and the pill draws
+   the frame, with a chevron in place of the platform arrow. */
+.slideshow__interval {
+  position: fixed;
+  inset: 1rem 7rem auto auto;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0 0.5rem 0 0.875rem;
+  background: #ffffff14;
+  border: 1px solid #ffffff2b;
+  border-radius: 1.25rem;
+  color: var(--ink);
+  font-size: 0.8125rem;
+  cursor: pointer;
+}
+
+.slideshow__interval:hover,
+.slideshow__interval:focus-within {
+  background: #ffffff2b;
+}
+
+.slideshow__interval svg {
+  width: 1rem;
+  height: 1rem;
+  stroke-width: 1.75;
+}
+
+.slideshow__interval select {
+  appearance: none;
+  height: 100%;
+  padding: 0 1.25rem 0 0;
+  background: transparent
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23e8e6e1' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E")
+    no-repeat right center / 0.875rem;
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  outline: none;
+}
+
+/* The open list is drawn by the platform; give it the dark ground so the
+   options are not white text on white. */
+.slideshow__interval option {
+  background: var(--ground-soft);
+  color: var(--ink);
 }
