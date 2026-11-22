@@ -9,3 +9,19 @@ publish = false
 
 [workspace.dependencies]
 museum-core = { path = "crates/museum-core" }
+
+# Dependencies are built optimised even in dev builds. Decoding, resizing and
+# WebP encoding all happen inside them, and unoptimised they are 30-50x slower:
+# measured on 3 MB camera JPEGs, a 2560 thumbnail took 12 s in a plain debug
+# build against 0.43 s in release, enough that the slideshow could not keep up
+# and every core stayed busy. Our own crates stay at opt-level 0 so they still
+# compile quickly and debug cleanly.
+[profile.dev.package."*"]
+opt-level = 3
+
+# museum-core too: the image crate's decoding, rotation and pixel conversion
+# are generic, so their code is instantiated in the crate that calls them and
+# compiled at that crate's level. With only the dependencies optimised, a 2560
+# thumbnail still took 4 s.
+[profile.dev.package.museum-core]
+opt-level = 3
