@@ -157,13 +157,14 @@ export function formatDuration(seconds: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
 }
 
-/// The original carries its file name as a last segment, which the server
-/// ignores: a browser titles a PDF tab after the end of its URL, and would
-/// otherwise show `orig`.
+/// The original is asked for by its file name, with the id in the query, and
+/// the server ignores the name: a browser titles a PDF tab after the end of
+/// its URL, and iOS Safari after the whole of it bar the query, so this keeps
+/// the title down to the name.
 export function imageUrl(image: ImageEntry, rendition: Rendition): string {
-  const path =
-    rendition === 'orig' ? `orig/${encodeURIComponent(image.name)}` : String(rendition)
-  return `/img/${image.id}/${path}?v=${encodeURIComponent(image.v)}`
+  const v = encodeURIComponent(image.v)
+  if (rendition === 'orig') return `/f/${encodeURIComponent(image.name)}?id=${image.id}&v=${v}`
+  return `/img/${image.id}/${rendition}?v=${v}`
 }
 
 /// The smallest rendition that still covers how big the picture will be drawn.

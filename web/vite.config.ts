@@ -13,6 +13,8 @@ export default defineConfig({
     proxy: {
       '/api': { target: backend, changeOrigin: false },
       '/img': { target: backend, changeOrigin: false },
+      // A regex rather than '/f', which as a prefix would also take /favicon.
+      '^/f/': { target: backend, changeOrigin: false },
     },
   },
 })

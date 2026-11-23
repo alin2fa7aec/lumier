@@ -217,9 +217,9 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/rescan", post(rescan))
         .route("/api/notes/{image_id}", get(note_html))
         .route("/img/{image_id}/{size}", get(image))
-        // The trailing name is for the browser alone: the tab title of a PDF
-        // and the default name when saving. The file is still found by id.
-        .route("/img/{image_id}/orig/{name}", get(named_original))
+        // The name is for the browser alone: the tab title of a PDF and the
+        // default name when saving. The file is still found by id.
+        .route("/f/{name}", get(named_original))
         .merge(marks::routes())
         .with_state(state)
 }
@@ -534,18 +534,28 @@ async fn image(
     serve_image(&state, &image_id, rendition, query, request).await
 }
 
-/// `/img/{id}/orig/{name}`: the original, with a file name on the end of the
-/// URL. Browsers title a PDF tab after the last segment of its URL when the
-/// document names no title of its own, and Content-Disposition alone does not
-/// reach every viewer. The name is never read: it neither finds the file nor
-/// has to match it, so it is no route to the filesystem.
+/// Where `/f/{name}` finds its file: the id, and the version as for `/img`.
+#[derive(serde::Deserialize)]
+struct NamedQuery {
+    id: String,
+    v: Option<String>,
+}
+
+/// `/f/{name}?id=…&v=…`: the original, under a URL whose path is nothing but
+/// its file name. Browsers title a PDF tab after the end of its URL when the
+/// document names no title of its own, and iOS Safari shows the URL whole
+/// (bar the query), so the id goes in the query to keep that title short.
+/// Content-Disposition alone does not reach every viewer.
+///
+/// The name is never read: it neither finds the file nor has to match it, so
+/// it is no route to the filesystem.
 async fn named_original(
     State(state): State<Arc<AppState>>,
-    Path((image_id, _name)): Path<(String, String)>,
-    Query(query): Query<ImageQuery>,
+    Path(_name): Path<String>,
+    Query(NamedQuery { id, v }): Query<NamedQuery>,
     request: Request,
 ) -> Response {
-    serve_image(&state, &image_id, Rendition::Original, query, request).await
+    serve_image(&state, &id, Rendition::Original, ImageQuery { v }, request).await
 }
 
 async fn serve_image(
