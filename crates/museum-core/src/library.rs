@@ -68,6 +68,10 @@ pub struct ScanStats {
 pub struct Library {
     root: PathBuf,
     index: HashMap<ImageId, String>,
+    /// Prefixed to each relative path before hashing it into an id, so the
+    /// trash, scanned as a library of its own, never hands out an id that
+    /// could also name a file in the library proper.
+    namespace: &'static str,
 }
 
 impl Library {
@@ -77,6 +81,16 @@ impl Library {
         Ok(Self {
             root: path::canonical_root(root)?,
             index: HashMap::new(),
+            namespace: "",
+        })
+    }
+
+    /// Opens the trash as a library, with ids that cannot collide with the
+    /// library's own.
+    pub fn open_trash(root: &Path) -> Result<Self, PathError> {
+        Ok(Self {
+            namespace: "trash:",
+            ..Self::open(root)?
         })
     }
 
@@ -86,6 +100,40 @@ impl Library {
 
     pub fn image_count(&self) -> usize {
         self.index.len()
+    }
+
+    /// The root-relative path an id was registered under. For the server's
+    /// own bookkeeping only; it must never reach a client.
+    pub fn rel_path(&self, id: &ImageId) -> Option<&str> {
+        self.index.get(id).map(String::as_str)
+    }
+
+    /// `rel_dir` and every directory beneath it, root-relative, without
+    /// following symlinks. For the trash, whose day folders keep the
+    /// library's own nesting.
+    pub fn subdirs(&self, rel_dir: &str) -> Result<Vec<String>, ScanError> {
+        let dir = path::resolve(&self.root, rel_dir)?;
+        let mut dirs = Vec::new();
+        for item in walkdir::WalkDir::new(&dir).follow_links(false) {
+            let item = match item {
+                Ok(item) => item,
+                Err(error) => {
+                    tracing::warn!(dir = %dir.display(), %error, "skipping unreadable entry");
+                    continue;
+                }
+            };
+            if !item.file_type().is_dir() {
+                continue;
+            }
+            let Ok(relative) = item.path().strip_prefix(&self.root) else {
+                continue;
+            };
+            let Some(relative) = relative.to_str() else {
+                continue;
+            };
+            dirs.push(relative.replace(std::path::MAIN_SEPARATOR, "/"));
+        }
+        Ok(dirs)
     }
 
     /// Scans a single directory and registers what it finds.
@@ -182,7 +230,7 @@ impl Library {
                 }
             };
 
-            let id = ImageId::for_rel_path(&rel_path);
+            let id = ImageId::for_rel_path(&format!("{}{rel_path}", self.namespace));
             self.index.insert(id, rel_path.clone());
             entries.push(ImageEntry {
                 id,
@@ -231,6 +279,28 @@ pub(crate) fn kind_of(name: &str) -> Option<Kind> {
     } else {
         None
     }
+}
+
+/// The movie half of a Live Photo, if `name` is a still that has one in
+/// `dir`: the files that are hidden from the wall because they belong to it,
+/// and so must move wherever it moves.
+pub fn live_photo_movies(dir: &Path, name: &str) -> Vec<String> {
+    if kind_of(name) != Some(Kind::Image) {
+        return Vec::new();
+    }
+    let Some(stem) = stem_of(name) else {
+        return Vec::new();
+    };
+    let Ok(read) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    read.filter_map(Result::ok)
+        .filter(|item| item.file_type().is_ok_and(|kind| kind.is_file()))
+        .filter_map(|item| item.file_name().into_string().ok())
+        .filter(|other| {
+            kind_of(other) == Some(Kind::Video) && stem_of(other).as_deref() == Some(&stem)
+        })
+        .collect()
 }
 
 /// The name without its extension, folded for comparison.

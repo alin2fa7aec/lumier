@@ -1,7 +1,7 @@
-import { Play } from 'lucide-react'
+import { Play, Trash2, Undo2 } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 
-import { formatDuration, imageUrl, type Room } from './api'
+import { formatDuration, imageUrl, provenance, type Room } from './api'
 
 /// How far a finger has to travel before the gesture commits to an axis. Below
 /// this a touch is still a tap.
@@ -17,6 +17,13 @@ const FLICK_VELOCITY = 0.4
 const EDGE_RESISTANCE = 0.3
 /// How long after a swipe a click is taken to be the swipe's own and ignored.
 const CLICK_AFTER_SWIPE = 400
+
+/// The one mark this picture can take: a deletion mark on a room's wall, a
+/// restore request in the trash.
+export type MarkControl = {
+  kind: 'mark' | 'restore'
+  onToggle: () => void
+}
 
 type Gesture = { pointer: number; x: number; y: number; at: number; axis: 'x' | 'y' | null }
 
@@ -35,6 +42,7 @@ export function Lightbox({
   onMove,
   onClose,
   onPlay,
+  mark,
 }: {
   room: Room
   index: number
@@ -43,6 +51,8 @@ export function Lightbox({
   /// Starts the slideshow from this picture. Absent until the floor plan has
   /// loaded, since the slideshow walks the whole museum.
   onPlay?: () => void
+  /// Absent when the server takes no marks.
+  mark?: MarkControl
 }) {
   const image = room.images[index]
   const last = room.images.length - 1
@@ -72,6 +82,11 @@ export function Lightbox({
         case 'Escape':
           onClose()
           break
+        case 'd':
+        case 'D':
+          if (mark === undefined) return
+          mark.onToggle()
+          break
         default:
           return
       }
@@ -79,7 +94,7 @@ export function Lightbox({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [index, last, onMove, onClose])
+  }, [index, last, onMove, onClose, mark])
 
   // Styles are written straight onto the elements while a finger is down,
   // rather than through state, so following the finger never waits on a
@@ -178,7 +193,18 @@ export function Lightbox({
   }
 
   if (image === undefined) return null
-  const pictureClass = `lightbox__image${enterFrom === null ? '' : ` lightbox__image--from-${enterFrom}`}`
+  const pictureClass = `lightbox__image${enterFrom === null ? '' : ` lightbox__image--from-${enterFrom}`}${image.marked ? ' lightbox__image--marked' : ''}`
+  const marked = mark?.kind === 'restore' ? Boolean(image.restore) : Boolean(image.marked)
+  const markLabel =
+    mark?.kind === 'restore'
+      ? marked
+        ? 'Keep in trash'
+        : 'Restore'
+      : marked
+        ? 'Unmark'
+        : 'Mark for deletion'
+  const status = image.marked ? 'Marked for deletion' : image.restore ? 'To be restored' : null
+  const origin = provenance(image)
 
   return (
     <div
@@ -232,6 +258,11 @@ export function Lightbox({
       )}
       <p className="lightbox__caption">
         {image.name}
+        {(status !== null || origin !== null) && (
+          <span className="lightbox__status">
+            {[status, origin].filter((part) => part !== null).join(' · ')}
+          </span>
+        )}
         <span>
           {image.w}×{image.h}
           {image.duration !== undefined && ` · ${formatDuration(image.duration)}`} · {index + 1} /{' '}
@@ -246,14 +277,30 @@ export function Lightbox({
             event.stopPropagation()
             onPlay()
           }}
-          aria-label="スライドショー"
+          aria-label="Slideshow"
           aria-keyshortcuts="P"
-          title="スライドショー (P)"
+          title="Slideshow (P)"
         >
           <Play aria-hidden="true" />
         </button>
       )}
-      <button type="button" className="lightbox__close" onClick={onClose} aria-label="閉じる">
+      {mark !== undefined && (
+        <button
+          type="button"
+          className={`lightbox__close lightbox__mark${marked ? ' lightbox__mark--on' : ''}`}
+          onClick={(event) => {
+            event.stopPropagation()
+            mark.onToggle()
+          }}
+          aria-pressed={marked}
+          aria-label={markLabel}
+          aria-keyshortcuts="D"
+          title={`${markLabel} (D)`}
+        >
+          {mark.kind === 'restore' ? <Undo2 aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+        </button>
+      )}
+      <button type="button" className="lightbox__close" onClick={onClose} aria-label="Close">
         ×
       </button>
     </div>

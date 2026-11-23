@@ -1,8 +1,17 @@
 // Renamed so it does not shadow the global Map.
-import { Map as MapIcon, Play } from 'lucide-react'
+import { Map as MapIcon, Play, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
-import { fetchMuseum, fetchRoom, type Museum, type Room } from './api'
+import {
+  fetchMuseum,
+  fetchRoom,
+  isSpecialWall,
+  setMark,
+  setRestore,
+  TRASH_WALL,
+  type Museum,
+  type Room,
+} from './api'
 import { FloorPlan } from './FloorPlan'
 import { Lightbox } from './Lightbox'
 import { jumpToRoom, replaceRoom, useRoute } from './route'
@@ -32,6 +41,17 @@ export default function App() {
   const [loaded, setLoaded] = useState<{ roomId: string; room: Room } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [overlay, setOverlay] = useState<Overlay>(null)
+  // The room whose wall is in selection mode. Kept with its id, like an open
+  // picture, so walking to another room leaves the mode behind.
+  const [selecting, setSelecting] = useState<string | null>(null)
+  // A short message for a change the server would not record.
+  const [flash, setFlash] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (flash === null) return
+    const timer = window.setTimeout(() => setFlash(null), 4000)
+    return () => window.clearTimeout(timer)
+  }, [flash])
 
   useEffect(() => {
     const controller = new AbortController()
@@ -76,6 +96,7 @@ export default function App() {
         event.preventDefault()
       } else if (event.key === 'Escape') {
         setOverlay(null)
+        setSelecting(null)
       }
     }
     window.addEventListener('keydown', onKeyDown)
@@ -83,7 +104,49 @@ export default function App() {
   }, [])
 
   const room = loaded !== null && loaded.roomId === route.roomId ? loaded.room : null
-  const playable = museum !== null && museum.rooms.some((entry) => entry.image_count > 0)
+  const special = room !== null && isSpecialWall(room.id)
+  // The slideshow walks the museum's rooms; a special wall is not one of them.
+  const playable =
+    !special && museum !== null && museum.rooms.some((entry) => entry.image_count > 0)
+  const marking = museum?.marking === true
+  const selectingHere = marking && room !== null && selecting === room.id
+
+  // Marks a picture, or in the trash asks for it back. The wall shows the
+  // change at once and puts it back if the server refuses.
+  const toggleMark = useCallback(
+    (index: number) => {
+      if (room === null) return
+      const image = room.images[index]
+      if (image === undefined) return
+      const restoring = room.id === TRASH_WALL
+      const on = restoring ? !image.restore : !image.marked
+      const show = (value: boolean) =>
+        setLoaded((current) =>
+          current === null || current.roomId !== room.id
+            ? current
+            : {
+                ...current,
+                room: {
+                  ...current.room,
+                  images: current.room.images.map((entry) =>
+                    entry.id !== image.id
+                      ? entry
+                      : restoring
+                        ? { ...entry, restore: value }
+                        : { ...entry, marked: value },
+                  ),
+                },
+              },
+        )
+      show(on)
+      const request = restoring ? setRestore(image, on) : setMark(image, on)
+      request.catch((cause: unknown) => {
+        show(!on)
+        setFlash(cause instanceof Error ? cause.message : String(cause))
+      })
+    },
+    [room],
+  )
   // What is actually on screen, after dropping a picture left behind by a
   // navigation. The wall keeps its keys whenever nothing is covering it.
   const showing =
@@ -136,7 +199,7 @@ export default function App() {
   // waits for the first measurement rather than fetching at a guessed size.
   // That measurement happens before paint, so nothing is visibly delayed.
   if (room === null || tierHeight === null) {
-    return <p className="notice">読み込み中…</p>
+    return <p className="notice">Loading…</p>
   }
 
   return (
@@ -146,8 +209,19 @@ export default function App() {
         arriveAt={route.arriveAt}
         tierHeight={tierHeight}
         keyboard={showing === null}
-        onOpenImage={(index) => setOverlay({ kind: 'image', roomId: room.id, index })}
+        selecting={selectingHere}
+        onOpenImage={
+          selectingHere
+            ? toggleMark
+            : (index) => setOverlay({ kind: 'image', roomId: room.id, index })
+        }
       />
+
+      {special && room.images.length === 0 && (
+        <p className="notice">
+          {room.id === TRASH_WALL ? 'The trash is empty' : 'Nothing is marked for deletion'}
+        </p>
+      )}
 
       <header className="plaque">
         <h1>{room.name}</h1>
@@ -160,9 +234,9 @@ export default function App() {
         // The shortcut is the quick way in; the button is how anyone finds it.
         // A map icon alone says what it opens; the name and the shortcut live
         // in the tooltip and the accessible name.
-        aria-label="見取り図"
+        aria-label="Floor plan"
         aria-keyshortcuts="M"
-        title="見取り図 (M)"
+        title="Floor plan (M)"
       >
         <MapIcon aria-hidden="true" />
       </button>
@@ -172,12 +246,32 @@ export default function App() {
           type="button"
           className="plan-button play-button"
           onClick={() => setOverlay({ kind: 'slideshow', start: { roomId: room.id, index: 0 } })}
-          aria-label="スライドショー"
+          aria-label="Slideshow"
           aria-keyshortcuts="P"
-          title="スライドショー (P)"
+          title="Slideshow (P)"
         >
           <Play aria-hidden="true" />
         </button>
+      )}
+
+      {marking && room.images.length > 0 && (
+        <button
+          type="button"
+          // Takes the play button's place on a wall that has none.
+          className={`plan-button ${playable ? 'select-button' : 'play-button'}${selectingHere ? ' plan-button--on' : ''}`}
+          onClick={() => setSelecting(selectingHere ? null : room.id)}
+          aria-pressed={selectingHere}
+          aria-label={room.id === TRASH_WALL ? 'Select to restore' : 'Select to delete'}
+          title={room.id === TRASH_WALL ? 'Select to restore' : 'Select to delete'}
+        >
+          {room.id === TRASH_WALL ? <Undo2 aria-hidden="true" /> : <Trash2 aria-hidden="true" />}
+        </button>
+      )}
+
+      {flash !== null && (
+        <p className="toast" role="status">
+          {flash}
+        </p>
       )}
 
       {showing?.kind === 'plan' && museum !== null && (
@@ -189,6 +283,14 @@ export default function App() {
           index={showing.index}
           onMove={(index) => setOverlay({ kind: 'image', roomId: room.id, index })}
           onClose={closeOverlay}
+          mark={
+            marking
+              ? {
+                  kind: room.id === TRASH_WALL ? 'restore' : 'mark',
+                  onToggle: () => toggleMark(showing.index),
+                }
+              : undefined
+          }
           onPlay={
             playable
               ? () =>

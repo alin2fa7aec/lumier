@@ -1,16 +1,17 @@
 mod api;
+mod marks;
 mod thumbs;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use api::{AppState, Snapshot};
+use api::{AppState, Snapshot, TrashScan};
 use clap::{Args, Parser, Subcommand};
-use museum_core::{ImageEntry, Library, Manifest, Museum, museum};
+use museum_core::{Date, ImageEntry, Library, Manifest, Museum, StateDir, museum, purge};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -27,6 +28,38 @@ enum Command {
     Serve(ServeArgs),
     /// Validate museum.yaml against the library and report what it finds.
     Check(LibraryArgs),
+    /// Put back what was asked for, move marked files to the trash, and empty
+    /// the trash of days kept long enough. Meant to run nightly, and the only
+    /// command that moves or deletes library files.
+    Purge(PurgeArgs),
+}
+
+#[derive(Args)]
+struct PurgeArgs {
+    /// Library root.
+    #[arg(long)]
+    root: PathBuf,
+
+    /// Where trashed files go. Must be on the library's filesystem, outside it.
+    #[arg(long)]
+    trash_dir: PathBuf,
+
+    /// Where `serve` records marks and restore requests.
+    #[arg(long)]
+    state_dir: PathBuf,
+
+    /// Days a file stays in the trash before it is deleted.
+    #[arg(long, default_value_t = 30)]
+    trash_days: u32,
+
+    /// Move nothing if more than this many files are marked. A guard against
+    /// marks nobody meant: the server takes them from anyone on the LAN.
+    #[arg(long, default_value_t = 500)]
+    limit: usize,
+
+    /// Lift the limit for this run.
+    #[arg(long)]
+    no_limit: bool,
 }
 
 #[derive(Args, Clone)]
@@ -64,6 +97,22 @@ struct ServeArgs {
     /// default; SIGHUP and `POST /api/rescan` rescan on demand either way.
     #[arg(long, value_name = "SECS")]
     rescan_interval: Option<u64>,
+
+    /// Where to record deletion marks and restore requests. Together with
+    /// --trash-dir this turns marking on; without both the server stays
+    /// read-only.
+    #[arg(long, requires = "trash_dir")]
+    state_dir: Option<PathBuf>,
+
+    /// The trash `lumier purge` moves marked files into. Read only, to list
+    /// it and offer restores.
+    #[arg(long, requires = "state_dir")]
+    trash_dir: Option<PathBuf>,
+
+    /// Days a file stays in the trash, for the countdown shown on it. Keep it
+    /// equal to purge's --trash-days.
+    #[arg(long, default_value_t = 30)]
+    trash_days: u32,
 }
 
 #[tokio::main]
@@ -78,6 +127,7 @@ async fn main() -> ExitCode {
     let result = match Cli::parse().command {
         Command::Serve(args) => serve(args).await,
         Command::Check(args) => check(&args),
+        Command::Purge(args) => run_purge(&args),
     };
 
     match result {
@@ -206,6 +256,102 @@ fn log_rescan(trigger: &str, result: Result<api::RescanReport, api::RescanError>
     }
 }
 
+/// Scans the trash: each day folder, and everything nested in it, newest
+/// day first. A missing trash is simply empty, since nothing has been
+/// purged yet; one that cannot be read is logged and left out.
+fn scan_trash(dir: &Path) -> Option<TrashScan> {
+    if !dir.exists() {
+        return None;
+    }
+    let mut library = match Library::open_trash(dir) {
+        Ok(library) => library,
+        Err(error) => {
+            tracing::error!(dir = %dir.display(), %error, "cannot open the trash");
+            return None;
+        }
+    };
+    let mut day_names: Vec<(Date, String)> = match std::fs::read_dir(library.root()) {
+        Ok(read) => read
+            .filter_map(Result::ok)
+            .filter_map(|item| item.file_name().into_string().ok())
+            .filter_map(|name| Some((name.parse::<Date>().ok()?, name)))
+            .collect(),
+        Err(error) => {
+            tracing::error!(dir = %dir.display(), %error, "cannot read the trash");
+            return None;
+        }
+    };
+    day_names.sort_by_key(|day| std::cmp::Reverse(day.0));
+
+    let mut days = Vec::new();
+    for (day, name) in day_names {
+        let mut dirs = match library.subdirs(&name) {
+            Ok(dirs) => dirs,
+            Err(error) => {
+                tracing::error!(%name, %error, "cannot read a trash day");
+                continue;
+            }
+        };
+        dirs.sort_by(|a, b| natord::compare_ignore_case(a, b));
+        let mut entries = Vec::new();
+        for rel_dir in dirs {
+            match library.scan_room(&rel_dir) {
+                Ok((found, _)) => entries.extend(found),
+                Err(error) => tracing::error!(%rel_dir, %error, "cannot scan the trash"),
+            }
+        }
+        days.push((day, entries));
+    }
+    Some(TrashScan { library, days })
+}
+
+fn run_purge(args: &PurgeArgs) -> anyhow::Result<ExitCode> {
+    let root = args
+        .root
+        .canonicalize()
+        .with_context(|| format!("cannot open library root {}", args.root.display()))?;
+    std::fs::create_dir_all(&args.trash_dir)
+        .with_context(|| format!("cannot create trash {}", args.trash_dir.display()))?;
+    let trash = args.trash_dir.canonicalize()?;
+    if trash.starts_with(&root) || root.starts_with(&trash) {
+        anyhow::bail!("the trash and the library must not contain each other");
+    }
+    // A move into the trash must be a rename. Across filesystems it would
+    // turn into a copy and a delete, which can fail halfway.
+    {
+        use std::os::unix::fs::MetadataExt;
+        if std::fs::metadata(&root)?.dev() != std::fs::metadata(&trash)?.dev() {
+            anyhow::bail!(
+                "the trash {} is not on the library's filesystem",
+                trash.display()
+            );
+        }
+    }
+    let state = StateDir::open(&args.state_dir)
+        .with_context(|| format!("cannot open state directory {}", args.state_dir.display()))?;
+
+    let report = purge::run(&purge::Options {
+        root: &root,
+        trash: &trash,
+        state: &state,
+        keep_days: args.trash_days,
+        limit: (!args.no_limit).then_some(args.limit),
+        today: Date::today(),
+    })?;
+    tracing::info!(?report, "purged");
+    println!(
+        "restored {}, moved {}, emptied {} days from the trash",
+        report.restored, report.moved, report.expired
+    );
+    if report.restore_blocked + report.stale + report.failed > 0 {
+        println!(
+            "left alone: {} restores blocked, {} marks stale, {} moves failed",
+            report.restore_blocked, report.stale, report.failed
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 fn bullets(lines: &[String]) -> String {
     lines
         .iter()
@@ -265,18 +411,43 @@ async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     );
 
     let cache_dir = args.cache_dir.unwrap_or_else(thumbs::default_cache_dir);
+    let marking = match &args.state_dir {
+        Some(state_dir) => {
+            let state = StateDir::open(state_dir)
+                .with_context(|| format!("cannot open state directory {}", state_dir.display()))?;
+            Some(marks::Marking::open(state, args.trash_days)?)
+        }
+        None => None,
+    };
+    let trash_dir = args.trash_dir.clone();
     let library_args = args.library.clone();
     let loader: api::Loader = Box::new(move || {
         let loaded = load(&library_args)?;
         for warning in &loaded.warnings {
             tracing::warn!("{warning}");
         }
-        Ok(Snapshot::new(loaded.library, loaded.museum, loaded.images))
+        let trash = trash_dir.as_deref().and_then(scan_trash);
+        Ok(Snapshot::new(
+            loaded.library,
+            loaded.museum,
+            loaded.images,
+            trash,
+        ))
     });
+    let trash = args.trash_dir.as_deref().and_then(scan_trash);
+    if marking.is_some() {
+        tracing::info!(
+            trashed = trash
+                .as_ref()
+                .map_or(0, |trash| trash.library.image_count()),
+            "deletion marks enabled"
+        );
+    }
     let state = Arc::new(AppState::new(
-        Snapshot::new(loaded.library, loaded.museum, loaded.images),
+        Snapshot::new(loaded.library, loaded.museum, loaded.images, trash),
         loader,
         thumbs::Thumbnailer::new(cache_dir),
+        marking,
     ));
     spawn_rescan_triggers(&state, args.rescan_interval)?;
 

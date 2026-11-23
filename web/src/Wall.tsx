@@ -1,10 +1,11 @@
-import { ChevronLeft, ChevronRight, Play } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Play, Trash2, Undo2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
 import {
   formatDuration,
   imageUrl,
   pickRendition,
+  provenance,
   type Door,
   type ImageEntry,
   type Room,
@@ -29,6 +30,7 @@ export function Wall({
   arriveAt,
   tierHeight,
   keyboard,
+  selecting,
   onOpenImage,
 }: {
   room: Room
@@ -37,6 +39,9 @@ export function Wall({
   /// False while an overlay is up, so arrow keys do not scroll the wall
   /// underneath it.
   keyboard: boolean
+  /// While selecting, a tap marks a picture instead of opening it, so a wall
+  /// can be sorted through without a trip into the lightbox for each.
+  selecting: boolean
   onOpenImage: (index: number) => void
 }) {
   const wall = useRef<HTMLDivElement>(null)
@@ -122,18 +127,32 @@ export function Wall({
   }, [keyboard, room])
 
   return (
-    <div className="wall" ref={wall} role="region" aria-label={`${room.name} の壁`}>
+    <div
+      className={`wall${selecting ? ' wall--selecting' : ''}`}
+      ref={wall}
+      role="region"
+      aria-label={`${room.name} wall`}
+    >
       <DoorGroup doors={room.doors.left} side="left" />
       {/* The tiers are a grid of their own, so where the doors sit does not
           depend on how the pictures happen to flow into it. */}
       <div className="tiers">
         {room.images.map((image, index) => (
-          <figure className="frame" key={image.id}>
+          <figure
+            className={`frame${image.marked ? ' frame--marked' : ''}${image.restore ? ' frame--restore' : ''}`}
+            key={image.id}
+          >
             <button
               type="button"
               className="frame__button"
               onClick={() => onOpenImage(index)}
-              aria-label={`${image.name} を${image.kind === 'video' ? '再生' : '拡大'}`}
+              title={provenance(image) ?? undefined}
+              aria-pressed={selecting ? Boolean(image.marked || image.restore) : undefined}
+              aria-label={
+                selecting
+                  ? `Toggle mark on ${image.name}`
+                  : `${image.kind === 'video' ? 'Play' : 'Open'} ${image.name}`
+              }
             >
               {image.kind === 'video' ? (
                 <VideoFrame image={image} />
@@ -147,6 +166,16 @@ export function Wall({
                   decoding="async"
                   draggable={false}
                 />
+              )}
+              {image.marked && (
+                <span className="frame__mark" role="img" aria-label="Marked for deletion">
+                  <Trash2 aria-hidden="true" />
+                </span>
+              )}
+              {image.restore && (
+                <span className="frame__mark" role="img" aria-label="To be restored">
+                  <Undo2 aria-hidden="true" />
+                </span>
               )}
             </button>
           </figure>
@@ -192,7 +221,7 @@ function VideoFrame({ image }: { image: ImageEntry }) {
 function DoorGroup({ doors, side }: { doors: Door[]; side: 'left' | 'right' }) {
   if (doors.length === 0) return null
   return (
-    <nav className={`doors doors--${side}`} aria-label={side === 'left' ? '左の扉' : '右の扉'}>
+    <nav className={`doors doors--${side}`} aria-label={side === 'left' ? 'Doors on the left' : 'Doors on the right'}>
       {doors.map((door) => (
         <button
           type="button"

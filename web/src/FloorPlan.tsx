@@ -1,7 +1,7 @@
 import { ChevronLeft, ChevronRight, MapPin } from 'lucide-react'
 import { useMemo } from 'react'
 
-import { imageUrl, type Museum, type MuseumRoom } from './api'
+import { imageUrl, MARKS_WALL, TRASH_WALL, type Museum, type MuseumRoom } from './api'
 import { jumpToRoom } from './route'
 
 /// The floor plan: every room, reachable in one step.
@@ -41,7 +41,7 @@ export function FloorPlan({
   }, [museum, currentRoomId])
 
   return (
-    <div className="plan" role="dialog" aria-modal="true" aria-label="見取り図" onClick={onClose}>
+    <div className="plan" role="dialog" aria-modal="true" aria-label="Floor plan" onClick={onClose}>
       <div className="plan__columns" onClick={(event) => event.stopPropagation()}>
         {columns.map((column) => (
           <section className="plan__column" key={column.key}>
@@ -60,7 +60,7 @@ export function FloorPlan({
           </section>
         ))}
       </div>
-      <button type="button" className="lightbox__close" onClick={onClose} aria-label="閉じる">
+      <button type="button" className="lightbox__close" onClick={onClose} aria-label="Close">
         ×
       </button>
     </div>
@@ -89,10 +89,10 @@ function RoomCard({
     doorSides === undefined
       ? ''
       : doorSides.left && doorSides.right
-        ? '左右の扉の先'
+        ? 'Through the doors at both ends'
         : doorSides.left
-          ? '左の扉の先'
-          : '右の扉の先'
+          ? 'Through the door on the left'
+          : 'Through the door on the right'
   return (
     <button type="button" className={`card card--${state}`} onClick={onPick} aria-current={here}>
       {room.cover !== null ? (
@@ -110,7 +110,7 @@ function RoomCard({
       <span className="card__caption">
         <span className="card__name">{room.name}</span>
         {here && (
-          <span className="card__mark" role="img" aria-label="現在地" title="現在地">
+          <span className="card__mark" role="img" aria-label="You are here" title="You are here">
             <MapPin aria-hidden="true" />
           </span>
         )}
@@ -172,5 +172,18 @@ function groupByDepth(museum: Museum): Column[] {
   if (unreachable.length > 0) {
     columns.push({ key: 'unreachable', rooms: unreachable })
   }
+
+  // The walls for sorting out deletions stand apart from the museum, after
+  // every room. They have no doors, so the plan is the way in.
+  if (museum.marking) {
+    columns.push({
+      key: 'marking',
+      rooms: [specialWall(MARKS_WALL, 'Marked for deletion'), specialWall(TRASH_WALL, 'Trash')],
+    })
+  }
   return columns
+}
+
+function specialWall(id: string, name: string): MuseumRoom {
+  return { id, name, image_count: 0, cover: null, doors: { left: [], right: [] } }
 }

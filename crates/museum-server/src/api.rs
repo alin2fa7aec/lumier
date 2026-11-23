@@ -9,8 +9,9 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use museum_core::museum::{Door, Doors};
-use museum_core::{ImageEntry, ImageId, Kind, Library, Museum, ThumbSize};
+use museum_core::{Date, ImageEntry, ImageId, Kind, Library, Museum, ThumbSize};
 
+use crate::marks::{self, MarkedPaths, Marking};
 use crate::thumbs::Thumbnailer;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
@@ -29,18 +30,31 @@ pub struct Snapshot {
     versions: HashMap<ImageId, String>,
     /// Videos have no thumbnail: the client draws their frame itself.
     videos: HashSet<ImageId>,
+    /// The trash, when deletion marks are enabled.
+    pub(crate) trash: Option<TrashScan>,
+}
+
+/// The trash as scanned: a library of its own, with ids that cannot collide
+/// with the library's, grouped by the day each file was moved there.
+pub struct TrashScan {
+    pub library: Library,
+    /// Newest day first.
+    pub days: Vec<(Date, Vec<ImageEntry>)>,
 }
 
 impl Snapshot {
-    pub fn new(library: Library, museum: Museum, images: HashMap<String, Vec<ImageEntry>>) -> Self {
-        let versions = images
-            .values()
-            .flatten()
-            .map(|image| (image.id, image.v.clone()))
-            .collect();
-        let videos = images
-            .values()
-            .flatten()
+    pub fn new(
+        library: Library,
+        museum: Museum,
+        images: HashMap<String, Vec<ImageEntry>>,
+        trash: Option<TrashScan>,
+    ) -> Self {
+        let trashed = trash
+            .iter()
+            .flat_map(|trash| trash.days.iter().flat_map(|(_, images)| images));
+        let all = || images.values().flatten().chain(trashed.clone());
+        let versions = all().map(|image| (image.id, image.v.clone())).collect();
+        let videos = all()
             .filter(|image| image.kind == Kind::Video)
             .map(|image| image.id)
             .collect();
@@ -50,18 +64,37 @@ impl Snapshot {
             images,
             versions,
             videos,
+            trash,
         }
     }
 
-    fn images_in(&self, room_id: &str) -> &[ImageEntry] {
+    pub(crate) fn museum(&self) -> &Museum {
+        &self.museum
+    }
+
+    pub(crate) fn library(&self) -> &Library {
+        &self.library
+    }
+
+    pub(crate) fn images_in(&self, room_id: &str) -> &[ImageEntry] {
         self.images.get(room_id).map_or(&[], Vec::as_slice)
     }
 
     /// The first still in a room, to stand for it where a thumbnail is drawn.
-    fn first_still(&self, room_id: &str) -> Option<&ImageEntry> {
+    /// One marked for deletion is passed over: it is on its way out.
+    fn first_still(&self, room_id: &str, marked: &MarkedPaths) -> Option<&ImageEntry> {
         self.images_in(room_id)
             .iter()
-            .find(|image| image.kind == Kind::Image)
+            .find(|image| image.kind == Kind::Image && !marked.contains(image))
+    }
+
+    /// The file behind an id, in the library or else in the trash.
+    fn source_path(&self, id: &ImageId) -> Option<std::path::PathBuf> {
+        self.library.image_path(id).or_else(|| {
+            self.trash
+                .as_ref()
+                .and_then(|trash| trash.library.image_path(id))
+        })
     }
 }
 
@@ -80,6 +113,9 @@ pub struct AppState {
     /// Outlives every snapshot: its single-flight gates and semaphore must
     /// keep working across a rescan.
     pub thumbs: Thumbnailer,
+    /// Deletion marks and restore requests. `None` keeps the server
+    /// read-only, as it was before marks existed.
+    pub(crate) marking: Option<Marking>,
 }
 
 /// Why a rescan did not replace the museum.
@@ -102,19 +138,32 @@ pub struct RescanReport {
 }
 
 impl AppState {
-    pub fn new(snapshot: Snapshot, loader: Loader, thumbs: Thumbnailer) -> Self {
+    pub fn new(
+        snapshot: Snapshot,
+        loader: Loader,
+        thumbs: Thumbnailer,
+        marking: Option<Marking>,
+    ) -> Self {
         Self {
             snapshot: RwLock::new(Arc::new(snapshot)),
             loader,
             rescanning: tokio::sync::Mutex::new(()),
             thumbs,
+            marking,
         }
+    }
+
+    /// Paths marked for deletion right now, or none when marking is off.
+    pub(crate) fn marked(&self) -> MarkedPaths {
+        self.marking
+            .as_ref()
+            .map_or_else(MarkedPaths::default, Marking::marked)
     }
 
     /// The current museum. Hold on to the returned `Arc` for the whole of a
     /// request rather than calling this twice, or the two halves could come
     /// from different scans.
-    fn current(&self) -> Arc<Snapshot> {
+    pub(crate) fn current(&self) -> Arc<Snapshot> {
         // A poisoned lock only means a writer panicked between two plain
         // assignments; the Arc inside is still whole.
         Arc::clone(&self.snapshot.read().unwrap_or_else(PoisonError::into_inner))
@@ -142,6 +191,11 @@ impl AppState {
             .snapshot
             .write()
             .unwrap_or_else(PoisonError::into_inner) = Arc::new(snapshot);
+        // A purge edits the state files and then asks for this rescan, so
+        // the marks it consumed must be read back too.
+        if let Some(marking) = &self.marking {
+            marking.reload().await?;
+        }
         Ok(report)
     }
 }
@@ -152,6 +206,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/rooms/{room_id}", get(room))
         .route("/api/rescan", post(rescan))
         .route("/img/{image_id}/{size}", get(image))
+        .merge(marks::routes())
         .with_state(state)
 }
 
@@ -194,23 +249,66 @@ struct DoorView<'a> {
 }
 
 #[derive(serde::Serialize)]
-struct DoorsView<'a> {
+pub(crate) struct DoorsView<'a> {
     left: Vec<DoorView<'a>>,
     right: Vec<DoorView<'a>>,
 }
 
-fn door_view<'a>(state: &'a Snapshot, door: &'a Door) -> DoorView<'a> {
+fn door_view<'a>(state: &'a Snapshot, door: &'a Door, marked: &MarkedPaths) -> DoorView<'a> {
     DoorView {
         to: &door.to,
         name: &door.name,
-        peek: state.first_still(&door.to),
+        peek: state.first_still(&door.to, marked),
     }
 }
 
-fn doors_view<'a>(state: &'a Snapshot, doors: &'a Doors) -> DoorsView<'a> {
+fn doors_view<'a>(state: &'a Snapshot, doors: &'a Doors, marked: &MarkedPaths) -> DoorsView<'a> {
     DoorsView {
-        left: doors.left.iter().map(|d| door_view(state, d)).collect(),
-        right: doors.right.iter().map(|d| door_view(state, d)).collect(),
+        left: doors
+            .left
+            .iter()
+            .map(|d| door_view(state, d, marked))
+            .collect(),
+        right: doors
+            .right
+            .iter()
+            .map(|d| door_view(state, d, marked))
+            .collect(),
+    }
+}
+
+/// An entry as the client sees it, with what this server knows about it
+/// beyond the file itself.
+#[derive(serde::Serialize)]
+pub(crate) struct EntryView<'a> {
+    #[serde(flatten)]
+    pub entry: &'a ImageEntry,
+    /// Marked for deletion.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub marked: bool,
+    /// In the trash and due to be put back by the next purge.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub restore: bool,
+    /// The room it hangs in, on the list of marks that gathers every room.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room: Option<&'a str>,
+    /// The day it went into the trash, and the days left before it is gone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub day: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub days_left: Option<i64>,
+}
+
+impl<'a> EntryView<'a> {
+    pub fn plain(entry: &'a ImageEntry) -> Self {
+        Self {
+            entry,
+            marked: false,
+            restore: false,
+            room: None,
+            day: None,
+            days_left: None,
+        }
     }
 }
 
@@ -218,6 +316,9 @@ fn doors_view<'a>(state: &'a Snapshot, doors: &'a Doors) -> DoorsView<'a> {
 struct MuseumView<'a> {
     entrance: &'a str,
     rooms: Vec<MuseumRoomView<'a>>,
+    /// Whether this server takes deletion marks, so the client knows to
+    /// offer them.
+    marking: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -232,8 +333,11 @@ struct MuseumRoomView<'a> {
 
 /// The floor plan: every room and how they join, without any image lists.
 async fn museum(State(state): State<Arc<AppState>>) -> Response {
+    let marked = state.marked();
+    let marking = state.marking.is_some();
     let state = state.current();
     let view = MuseumView {
+        marking,
         entrance: state.museum.entrance(),
         rooms: state
             .museum
@@ -243,8 +347,8 @@ async fn museum(State(state): State<Arc<AppState>>) -> Response {
                 id: &room.id,
                 name: &room.name,
                 image_count: state.images_in(&room.id).len(),
-                cover: state.first_still(&room.id),
-                doors: doors_view(&state, &room.doors),
+                cover: state.first_still(&room.id, &marked),
+                doors: doors_view(&state, &room.doors, &marked),
             })
             .collect(),
     };
@@ -252,14 +356,31 @@ async fn museum(State(state): State<Arc<AppState>>) -> Response {
 }
 
 #[derive(serde::Serialize)]
-struct RoomView<'a> {
-    id: &'a str,
-    name: &'a str,
-    images: &'a [ImageEntry],
-    doors: DoorsView<'a>,
+pub(crate) struct RoomView<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    pub images: Vec<EntryView<'a>>,
+    pub doors: DoorsView<'a>,
+}
+
+impl RoomView<'_> {
+    /// A wall that is not a room of the museum and has no doors: the list of
+    /// marks, or the trash. The client names it.
+    pub fn special<'a>(id: &'a str, images: Vec<EntryView<'a>>) -> RoomView<'a> {
+        RoomView {
+            id,
+            name: "",
+            images,
+            doors: DoorsView {
+                left: Vec::new(),
+                right: Vec::new(),
+            },
+        }
+    }
 }
 
 async fn room(State(state): State<Arc<AppState>>, Path(room_id): Path<String>) -> Response {
+    let marked = state.marked();
     let state = state.current();
     let Some(room) = state.museum.room(&room_id) else {
         return StatusCode::NOT_FOUND.into_response();
@@ -269,8 +390,15 @@ async fn room(State(state): State<Arc<AppState>>, Path(room_id): Path<String>) -
     Json(RoomView {
         id: &room.id,
         name: &room.name,
-        images: state.images_in(&room.id),
-        doors: doors_view(&state, &room.doors),
+        images: state
+            .images_in(&room.id)
+            .iter()
+            .map(|entry| EntryView {
+                marked: marked.contains(entry),
+                ..EntryView::plain(entry)
+            })
+            .collect(),
+        doors: doors_view(&state, &room.doors, &marked),
     })
     .into_response()
 }
@@ -317,7 +445,7 @@ async fn image(
         return StatusCode::NOT_FOUND.into_response();
     };
     let snapshot = state.current();
-    let Some(source) = snapshot.library.image_path(&image_id) else {
+    let Some(source) = snapshot.source_path(&image_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 

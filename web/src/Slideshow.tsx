@@ -32,7 +32,7 @@ function rememberInterval(seconds: Interval): void {
 }
 
 function intervalLabel(seconds: Interval): string {
-  return seconds < 60 ? `${seconds}秒` : `${seconds / 60}分`
+  return seconds < 60 ? `${seconds} s` : `${seconds / 60} min`
 }
 /// How long the controls stay up after the pointer last moved.
 const CONTROLS_LINGER = 2500
@@ -71,7 +71,8 @@ function tourOrder(museum: Museum): string[] {
 /// length that fits the interval.
 function nextStill(room: Room, index: number, delta: 1 | -1): number | null {
   for (let i = index; i >= 0 && i < room.images.length; i += delta) {
-    if (room.images[i].kind !== 'video') return i
+    // Videos are passed over, and so is anything marked for deletion.
+    if (room.images[i].kind !== 'video' && room.images[i].marked !== true) return i
   }
   return null
 }
@@ -160,7 +161,7 @@ export function Slideshow({
         if (first === null) continue
         return { room, index: first }
       }
-      throw new Error('流せる写真がありません')
+      throw new Error('No photos to show')
     },
     [loadRoom, order, counts],
   )
@@ -285,7 +286,7 @@ export function Slideshow({
       className={`slideshow${awake ? '' : ' slideshow--asleep'}`}
       role="dialog"
       aria-modal="true"
-      aria-label="スライドショー"
+      aria-label="Slideshow"
       onPointerMove={wake}
       onPointerDown={wake}
     >
@@ -322,12 +323,12 @@ export function Slideshow({
             </span>
           </p>
         )}
-        <label className="slideshow__interval" title="切り替えの間隔">
+        <label className="slideshow__interval" title="Interval">
           <Timer aria-hidden="true" />
           <select
             ref={paceSelect}
             value={pace}
-            aria-label="切り替えの間隔"
+            aria-label="Interval"
             onChange={(event) => {
               choosePace(Number(event.currentTarget.value))
               // Let go of focus, so the controls can fade again and the keys
@@ -346,9 +347,9 @@ export function Slideshow({
           type="button"
           className="lightbox__close lightbox__play"
           onClick={() => onStop(position)}
-          aria-label="一時停止"
+          aria-label="Pause"
           aria-keyshortcuts="P"
-          title="一時停止 (P)"
+          title="Pause (P)"
         >
           <Pause aria-hidden="true" />
         </button>
@@ -356,8 +357,8 @@ export function Slideshow({
           type="button"
           className="lightbox__close"
           onClick={() => onExit(position)}
-          aria-label="閉じる"
-          title="閉じる (Esc)"
+          aria-label="Close"
+          title="Close (Esc)"
         >
           <X aria-hidden="true" />
         </button>

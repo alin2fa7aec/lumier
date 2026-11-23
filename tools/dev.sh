@@ -6,7 +6,8 @@
 #
 # Defaults to the generated fixtures, creating them on the first run. Point it
 # at another library with LUMIER_ROOT and LUMIER_MANIFEST (absolute, or relative
-# to the repository root).
+# to the repository root). LUMIER_PORT moves lumier off 8080, for when an
+# installed service already holds it.
 #
 #   bash tools/dev.sh --lan
 #
@@ -14,6 +15,13 @@
 # is exposed: lumier itself stays on 127.0.0.1 and the phone reaches it through
 # Vite's proxy. There is no authentication, so anyone on the network can browse
 # the library while it runs, and the host's firewall must let 5173 in.
+#
+# Deletion marks are on, recorded in .local/dev-state with .local/dev-trash as
+# the trash. Nothing moves until the purge is run by hand:
+#
+#   ./target/debug/lumier purge --root sample-photos \
+#     --trash-dir .local/dev-trash --state-dir .local/dev-state
+#   curl -X POST localhost:${LUMIER_PORT:-8080}/api/rescan
 
 set -euo pipefail
 
@@ -32,6 +40,8 @@ cd "$repo"
 
 root=${LUMIER_ROOT:-sample-photos}
 manifest=${LUMIER_MANIFEST:-museum.sample.yaml}
+port=${LUMIER_PORT:-8080}
+backend="http://127.0.0.1:$port"
 case $manifest in /*) ;; *) manifest="$repo/$manifest" ;; esac
 
 if [[ $root == sample-photos && ! -d sample-photos/hall ]]; then
@@ -47,12 +57,20 @@ fi
 
 # Build first so compile time does not count against the readiness wait below.
 cargo build --bin lumier
-./target/debug/lumier serve --root "$root" --manifest "$manifest" &
+
+# Another server already on the port would answer the readiness check below
+# while ours fails to bind, and Vite would quietly proxy to the wrong library.
+if curl -fs -o /dev/null "$backend/api/museum"; then
+  echo "something is already serving on port $port; stop it or set LUMIER_PORT" >&2
+  exit 1
+fi
+./target/debug/lumier serve --root "$root" --manifest "$manifest" \
+  --bind "127.0.0.1:$port" --state-dir .local/dev-state --trash-dir .local/dev-trash &
 server=$!
 trap 'kill "$server" 2>/dev/null || true' EXIT
 
 for _ in $(seq 100); do
-  if curl -fs -o /dev/null http://127.0.0.1:8080/api/museum; then break; fi
+  if curl -fs -o /dev/null "$backend/api/museum"; then break; fi
   if ! kill -0 "$server" 2>/dev/null; then
     echo "lumier exited before it started listening" >&2
     exit 1
@@ -61,4 +79,4 @@ for _ in $(seq 100); do
 done
 
 cd web
-npm run dev -- "${vite_args[@]}"
+LUMIER_BACKEND=$backend npm run dev -- "${vite_args[@]}"

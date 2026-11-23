@@ -63,6 +63,69 @@ pub fn resolve(root: &Path, rel_path: &str) -> Result<PathBuf, PathError> {
     Ok(resolved)
 }
 
+/// Resolves a root-relative path that does not exist yet, creating its
+/// missing parent directories, for a file about to be moved into place.
+///
+/// The same refusals as [`resolve`] apply. Containment is checked on the
+/// deepest ancestor that already exists, after canonicalizing it, and only
+/// then are the missing directories created beneath it: creating first would
+/// let a symlinked ancestor put new directories outside the root. Fails if the
+/// target itself already exists, so a move can never overwrite a file.
+pub fn resolve_new(root: &Path, rel_path: &str) -> Result<PathBuf, PathError> {
+    let candidate = Path::new(rel_path);
+    let mut segments = Vec::new();
+    for component in candidate.components() {
+        match component {
+            Component::Normal(segment) => segments.push(segment),
+            Component::CurDir | Component::ParentDir => {
+                return Err(PathError::NonLiteralSegment(rel_path.to_owned()));
+            }
+            Component::RootDir | Component::Prefix(_) => {
+                return Err(PathError::NotRelative(rel_path.to_owned()));
+            }
+        }
+    }
+    let Some((name, parents)) = segments.split_last() else {
+        return Err(PathError::NotRelative(rel_path.to_owned()));
+    };
+    let io = |source| PathError::Io {
+        path: rel_path.to_owned(),
+        source,
+    };
+
+    // Walk down while the directories exist, canonicalizing as we go.
+    let mut existing = root.to_path_buf();
+    let mut missing = parents.iter();
+    for segment in missing.by_ref() {
+        let next = existing.join(segment);
+        match next.canonicalize() {
+            Ok(resolved) => existing = resolved,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                if !existing.starts_with(root) {
+                    return Err(PathError::EscapesRoot(rel_path.to_owned()));
+                }
+                std::fs::create_dir(&next).map_err(io)?;
+                existing = next;
+                break;
+            }
+            Err(error) => return Err(io(error)),
+        }
+    }
+    if !existing.starts_with(root) {
+        return Err(PathError::EscapesRoot(rel_path.to_owned()));
+    }
+    for segment in missing {
+        existing.push(segment);
+        std::fs::create_dir(&existing).map_err(io)?;
+    }
+
+    let target = existing.join(name);
+    if target.symlink_metadata().is_ok() {
+        return Err(io(std::io::Error::from(std::io::ErrorKind::AlreadyExists)));
+    }
+    Ok(target)
+}
+
 /// Canonicalizes the library root once, at startup.
 pub fn canonical_root(root: &Path) -> Result<PathBuf, PathError> {
     root.canonicalize().map_err(|source| PathError::Io {
@@ -74,10 +137,11 @@ pub fn canonical_root(root: &Path) -> Result<PathBuf, PathError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testutil::TempDir;
 
     /// Builds `root/inside/photo.jpg` plus a sibling `outside/secret.txt`.
-    fn fixture() -> (tempdir::TempDir, PathBuf) {
-        let dir = tempdir::TempDir::new();
+    fn fixture() -> (TempDir, PathBuf) {
+        let dir = TempDir::new();
         std::fs::create_dir_all(dir.path().join("root/inside")).unwrap();
         std::fs::create_dir_all(dir.path().join("outside")).unwrap();
         std::fs::write(dir.path().join("root/inside/photo.jpg"), b"x").unwrap();
@@ -123,36 +187,42 @@ mod tests {
         assert!(matches!(err, PathError::EscapesRoot(_)), "got {err:?}");
     }
 
-    /// Minimal scratch directory helper, so the crate takes no dev-dependency
-    /// just to make a few files.
-    mod tempdir {
-        use std::path::{Path, PathBuf};
-        use std::sync::atomic::{AtomicU32, Ordering};
+    #[test]
+    fn resolve_new_creates_the_missing_parents() {
+        let (_dir, root) = fixture();
+        let target = resolve_new(&root, "2026-11-24/photos/new.jpg").unwrap();
+        assert_eq!(target, root.join("2026-11-24/photos/new.jpg"));
+        assert!(root.join("2026-11-24/photos").is_dir());
+        assert!(!target.exists());
+    }
 
-        pub struct TempDir(PathBuf);
+    #[test]
+    fn resolve_new_refuses_an_existing_target() {
+        let (_dir, root) = fixture();
+        let err = resolve_new(&root, "inside/photo.jpg").unwrap_err();
+        assert!(matches!(err, PathError::Io { .. }), "got {err:?}");
+    }
 
-        impl TempDir {
-            pub fn new() -> Self {
-                static COUNTER: AtomicU32 = AtomicU32::new(0);
-                let unique = format!(
-                    "lumier-test-{}-{}",
-                    std::process::id(),
-                    COUNTER.fetch_add(1, Ordering::Relaxed)
-                );
-                let path = std::env::temp_dir().join(unique);
-                std::fs::create_dir_all(&path).unwrap();
-                Self(path)
-            }
+    #[test]
+    fn resolve_new_refuses_traversal() {
+        let (_dir, root) = fixture();
+        assert!(matches!(
+            resolve_new(&root, "../x.jpg"),
+            Err(PathError::NonLiteralSegment(_))
+        ));
+        assert!(matches!(
+            resolve_new(&root, "/x.jpg"),
+            Err(PathError::NotRelative(_))
+        ));
+    }
 
-            pub fn path(&self) -> &Path {
-                &self.0
-            }
-        }
-
-        impl Drop for TempDir {
-            fn drop(&mut self) {
-                let _ = std::fs::remove_dir_all(&self.0);
-            }
-        }
+    #[cfg(unix)]
+    #[test]
+    fn resolve_new_creates_nothing_through_a_symlink_out_of_the_root() {
+        let (dir, root) = fixture();
+        std::os::unix::fs::symlink(dir.path().join("outside"), root.join("escape")).unwrap();
+        let err = resolve_new(&root, "escape/sub/x.jpg").unwrap_err();
+        assert!(matches!(err, PathError::EscapesRoot(_)), "got {err:?}");
+        assert!(!dir.path().join("outside/sub").exists());
     }
 }

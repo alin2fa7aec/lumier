@@ -65,7 +65,8 @@ to this machine.
 `tools/dev.sh` is the one-command way to check the app in a browser: it
 generates the fixtures if missing, starts the API server, waits for it to
 listen, then runs Vite on :5173; Ctrl-C stops both. `LUMIER_ROOT` and
-`LUMIER_MANIFEST` point it at another library. `--lan` also serves Vite
+`LUMIER_MANIFEST` point it at another library, and `LUMIER_PORT` moves lumier
+off 8080 when an installed service already holds it. `--lan` also serves Vite
 on the LAN for checking from a phone; only 5173 is exposed, lumier stays on
 127.0.0.1 behind Vite's proxy, and the NixOS firewall has to let 5173 in. Claude Code's Bash sandbox gives
 each command a private network, so a server started there is unreachable from
@@ -76,6 +77,12 @@ bash tools/dev.sh               # then browse http://localhost:5173
 
 # Validate the manifest; exits 1 on errors
 cargo run --bin lumier -- check --root sample-photos --manifest "$PWD/museum.sample.yaml"
+
+# Deletion marks: serve records them, purge acts on them. The trash must sit
+# on the library's filesystem, outside it.
+cargo run --bin lumier -- serve --root sample-photos --manifest "$PWD/museum.sample.yaml" \
+  --state-dir .local/dev-state --trash-dir .local/dev-trash
+cargo run --bin lumier -- purge --root sample-photos --trash-dir .local/dev-trash --state-dir .local/dev-state
 
 # Two processes during development. The Vite proxy keeps everything
 # same-origin, so the server needs no CORS handling.
@@ -155,6 +162,20 @@ one lock keeps them from overlapping.
 **`rel_path` is `#[serde(skip)]`** on both `ImageEntry` and `museum::Room`. It
 must stay that way — it is the field that would leak library paths to the client.
 
+**`serve` never writes to the library.** With `--state-dir` and `--trash-dir`
+it takes deletion marks and restore requests, but writes them only to the
+state directory. `lumier purge` (`museum_core::purge`) is the only code that
+moves or deletes library files, run nightly in its own unit. Both lock the
+state directory (`museum_core::state`) for every read-modify-write and the
+purge holds the lock for its whole run, so a mark made mid-purge waits rather
+than being lost. A mark is the path plus the version at marking time; the
+purge skips a file whose version has changed, so a file replaced under the
+same name is never the one that goes. Files reach the trash at
+`{day}/{library path}` and come back by the reverse rename, which
+`path::resolve_new` makes containment-checked like every other path. The
+trash is scanned as a `Library` whose ids hash a `trash:`-prefixed path, so
+trash ids cannot collide with library ids and `/img` serves both.
+
 ### Why these dependencies
 
 `tower-http`'s `ServeFile` is served via `oneshot` from the image handler rather
@@ -187,6 +208,16 @@ POST /api/rescan            Re-read the manifest and rescan the library. 409
 GET /img/{image_id}/{size}  Image bytes. `size` is 320|640|1280|2560 (WebP, long
                             edge) or `orig` (the source file, for the lightbox).
                             `?v=` from the room API marks the response immutable.
+PUT|DELETE /api/marks/{image_id}
+                            Mark for deletion, or take the mark back. Only with
+                            --state-dir/--trash-dir; PUT and DELETE from another
+                            Origin get 403.
+GET /api/marks              Every marked picture, room by room, as a door-less
+                            room the client calls `~marks`.
+GET /api/trash              The trash, newest day first, with `day`,
+                            `days_left` and `restore`, as `~trash`.
+PUT|DELETE /api/trash/{image_id}/restore
+                            Ask the next purge to put a file back, or not.
 GET /*                      Falls back to index.html when --web-dir is set.
 ```
 

@@ -11,6 +11,7 @@ image = { version = "0.25.10", default-features = false, features = ["jpeg", "pn
 kamadak-exif = "0.6.1"
 natord = "1.0.9"
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.152"
 serde_norway = "0.9.42"
 thiserror = "2.0.21"
 tracing = "0.1.44"

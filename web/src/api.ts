@@ -13,6 +13,16 @@ export type ImageEntry = {
   kind: 'image' | 'video'
   /// Length in seconds, for videos.
   duration?: number
+  /// Marked for deletion: the nightly purge will move it to the trash.
+  marked?: boolean
+  /// In the trash and due to be put back by the next purge.
+  restore?: boolean
+  /// On the list of marks, the room the picture hangs in.
+  room?: string
+  /// In the trash, the day it was moved there and the days left before it
+  /// is deleted.
+  day?: string
+  days_left?: number
 }
 
 export type Door = {
@@ -46,12 +56,24 @@ export type MuseumRoom = {
 export type Museum = {
   entrance: string
   rooms: MuseumRoom[]
+  /// Whether the server takes deletion marks. Without it the viewer is
+  /// read-only and offers none of the marking controls.
+  marking: boolean
+}
+
+/// Walls that are not rooms of the museum. Room ids are lowercase letters,
+/// digits, `_` and `-`, so a `~` can never collide with one.
+export const MARKS_WALL = '~marks'
+export const TRASH_WALL = '~trash'
+
+export function isSpecialWall(roomId: string): boolean {
+  return roomId === MARKS_WALL || roomId === TRASH_WALL
 }
 
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(url, { signal })
   if (!response.ok) {
-    throw new Error(`${url} を読めませんでした (HTTP ${response.status})`)
+    throw new Error(`Could not load ${url} (HTTP ${response.status})`)
   }
   return response.json() as Promise<T>
 }
@@ -60,8 +82,40 @@ export function fetchMuseum(signal?: AbortSignal): Promise<Museum> {
   return getJson<Museum>('/api/museum', signal)
 }
 
-export function fetchRoom(roomId: string, signal?: AbortSignal): Promise<Room> {
+export async function fetchRoom(roomId: string, signal?: AbortSignal): Promise<Room> {
+  if (roomId === MARKS_WALL) {
+    return { ...(await getJson<Room>('/api/marks', signal)), name: 'Marked for deletion' }
+  }
+  if (roomId === TRASH_WALL) {
+    return { ...(await getJson<Room>('/api/trash', signal)), name: 'Trash' }
+  }
   return getJson<Room>(`/api/rooms/${encodeURIComponent(roomId)}`, signal)
+}
+
+async function send(method: 'PUT' | 'DELETE', url: string): Promise<void> {
+  const response = await fetch(url, { method })
+  if (!response.ok) {
+    throw new Error(`Could not save the change (HTTP ${response.status})`)
+  }
+}
+
+/// Marks a picture for deletion, or takes the mark back.
+export function setMark(image: ImageEntry, on: boolean): Promise<void> {
+  return send(on ? 'PUT' : 'DELETE', `/api/marks/${image.id}`)
+}
+
+/// Asks for a picture in the trash to be put back, or withdraws the request.
+export function setRestore(image: ImageEntry, on: boolean): Promise<void> {
+  return send(on ? 'PUT' : 'DELETE', `/api/trash/${image.id}/restore`)
+}
+
+/// Where a picture on a special wall comes from, for its caption.
+export function provenance(image: ImageEntry): string | null {
+  if (image.room !== undefined) return image.room
+  if (image.day !== undefined) {
+    return image.days_left === undefined ? image.day : `${image.day} · ${image.days_left} ${image.days_left === 1 ? 'day' : 'days'} left`
+  }
+  return null
 }
 
 /// Renditions the server will produce, measured on the long edge.
