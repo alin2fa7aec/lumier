@@ -133,7 +133,7 @@ in
       user = mkOption {
         type = types.str;
         default = "root";
-        example = "alin";
+        example = "photos";
         description = ''
           User the purge runs as. It moves library files, so it needs write
           access to the library and the trash; the owner of the files (the

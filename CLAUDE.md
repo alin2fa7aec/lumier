@@ -58,9 +58,8 @@ manifest is kept outside the library and passed with `--manifest`, which is the
 shape this wants on a NAS: the graph is version-controlled in the repo, the
 share stays untouched.
 
-The real screenshot library `ss/` and its `museum.ss.yaml`, which the
-measurements below were taken on, were not carried over when the project moved
-to this machine.
+The measurements below that mention `ss/` were taken on a private screenshot
+library with its own `museum.ss.yaml`; neither is in the repository.
 
 `tools/dev.sh` is the one-command way to check the app in a browser: it
 generates the fixtures if missing, starts the API server, waits for it to

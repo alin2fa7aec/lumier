@@ -68,6 +68,11 @@ rustPlatform.buildRustPackage {
 
   meta = {
     description = "A museum-shaped viewer for a photo library";
+    homepage = "https://github.com/alin2fa7aec/lumier";
+    license = with lib.licenses; [
+      mit
+      asl20
+    ];
     mainProgram = "lumier";
     platforms = lib.platforms.linux;
   };
