@@ -78,6 +78,18 @@ The flake provides the package and a NixOS module:
 The service sees the filesystem read-only apart from its cache.
 `systemctl reload lumier` rescans the library.
 
+To serve several museums from one machine, say two collections that should
+not share a floor plan or a slideshow, give each its own manifest and port
+under `services.lumier.instances`. Each runs as `lumier-<name>.service` with
+its own cache and state:
+
+```nix
+services.lumier.instances = {
+  family = { root = "/srv/photos"; manifest = ./family.yaml; port = 8080; };
+  travel = { root = "/srv/photos"; manifest = ./travel.yaml; port = 8081; };
+};
+```
+
 ## Security
 
 **lumier has no authentication.** It is meant for a trusted LAN (or a VPN such

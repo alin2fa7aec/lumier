@@ -99,9 +99,13 @@ jj st && nix build .#lumier     # result/bin/lumier, result/share/lumier/web
 ```
 
 The NAS imports `nix/module.nix` (also `nixosModules.default` in the flake) and
-sets `services.lumier.{enable,root,manifest,openFirewall}`. The unit sees the
-whole filesystem read-only apart from `/var/cache/lumier`, so the library
-cannot be written even by a compromised server. `systemctl reload lumier`
+sets `services.lumier.{enable,root,manifest,openFirewall}`. Each entry of
+`services.lumier.instances.<name>` takes the same per-server options and runs
+another server, `lumier-<name>.service`, with its own port, manifest, cache
+(`/var/cache/lumier-<name>`) and state; the top-level options stay the
+`lumier.service` instance so older configurations keep working. Each unit sees
+the whole filesystem read-only apart from its cache and state, so the library
+cannot be written even by a compromised server. `systemctl reload` on the unit
 rescans.
 
 `--manifest` is relative to `--root` unless absolute. `--cache-dir` holds
