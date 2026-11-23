@@ -105,9 +105,13 @@ export default function App() {
 
   const room = loaded !== null && loaded.roomId === route.roomId ? loaded.room : null
   const special = room !== null && isSpecialWall(room.id)
-  // The slideshow walks the museum's rooms; a special wall is not one of them.
+  // The slideshow walks the museum's rooms; a special wall is not one of them,
+  // and a room the manifest leaves out of the slideshow does not start one.
   const playable =
-    !special && museum !== null && museum.rooms.some((entry) => entry.image_count > 0)
+    !special &&
+    museum !== null &&
+    museum.rooms.find((entry) => entry.id === room?.id)?.slideshow !== false &&
+    museum.rooms.some((entry) => entry.slideshow && entry.image_count > 0)
   const marking = museum?.marking === true
   const selectingHere = marking && room !== null && selecting === room.id
 

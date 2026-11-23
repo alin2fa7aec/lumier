@@ -51,6 +51,10 @@ pub struct RoomDef {
     /// How the room's pictures are ordered along the wall.
     #[serde(default)]
     pub order: Order,
+    /// Whether the slideshow plays this room. A room left out is passed over
+    /// by the tour and offers no way to start one.
+    #[serde(default = "yes")]
+    pub slideshow: bool,
 }
 
 /// How a room's pictures are ordered.
@@ -187,6 +191,16 @@ doors:
             Manifest::parse("version: 1\nentrance: a\nrooms: [{id: a, name: A, order: exif}]\n")
                 .is_err()
         );
+    }
+
+    #[test]
+    fn plays_a_room_in_the_slideshow_unless_told_not_to() {
+        let manifest = Manifest::parse(
+            "version: 1\nentrance: a\nrooms: [{id: a, name: A, slideshow: false}, {id: b, name: B}]\n",
+        )
+        .unwrap();
+        assert!(!manifest.rooms[0].slideshow);
+        assert!(manifest.rooms[1].slideshow);
     }
 
     #[test]

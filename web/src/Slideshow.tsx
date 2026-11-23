@@ -46,6 +46,7 @@ type Slide = { serial: number; room: Room; index: number; image: ImageEntry; src
 /// Every room in the order a visitor would walk them: depth first from the
 /// entrance, onward doors before the ones leading back, then any room no door
 /// reaches, in manifest order, so the floor plan's jump-only rooms still play.
+/// Rooms the manifest marks `slideshow: false` are dropped from the result.
 ///
 /// The walk follows the manifest's doors rather than its room list because
 /// the doors are the curation: a hub's right end lists its branches in the
@@ -63,7 +64,9 @@ function tourOrder(museum: Museum): string[] {
   }
   visit(museum.entrance)
   for (const room of museum.rooms) visit(room.id)
-  return order
+  // A room left out of the slideshow is still walked through, so the rooms
+  // behind it keep their place in the tour.
+  return order.filter((id) => rooms.get(id)?.slideshow !== false)
 }
 
 /// The first still at or after `index` going in `delta`'s direction, or null

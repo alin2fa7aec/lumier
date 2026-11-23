@@ -185,5 +185,5 @@ function groupByDepth(museum: Museum): Column[] {
 }
 
 function specialWall(id: string, name: string): MuseumRoom {
-  return { id, name, image_count: 0, cover: null, doors: { left: [], right: [] } }
+  return { id, name, image_count: 0, slideshow: false, cover: null, doors: { left: [], right: [] } }
 }

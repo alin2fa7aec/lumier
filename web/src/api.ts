@@ -52,6 +52,9 @@ export type MuseumRoom = {
   id: string
   name: string
   image_count: number
+  /// Whether the slideshow plays this room. The manifest's `slideshow: false`
+  /// leaves it out of the tour and takes away the play button there.
+  slideshow: boolean
   /// One picture to stand for the room on the floor plan.
   cover: ImageEntry | null
   doors: Doors

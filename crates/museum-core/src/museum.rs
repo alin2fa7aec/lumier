@@ -49,6 +49,8 @@ pub struct Room {
     pub rel_path: Option<String>,
     #[serde(skip)]
     pub order: Order,
+    /// Whether the slideshow plays this room.
+    pub slideshow: bool,
     pub doors: Doors,
 }
 
@@ -127,6 +129,7 @@ pub fn build(manifest: &Manifest, root: &Path) -> Result<Validated, Vec<String>>
             name: definition.name.clone(),
             rel_path: definition.path.clone(),
             order: definition.order,
+            slideshow: definition.slideshow,
             doors: Doors::default(),
         });
     }

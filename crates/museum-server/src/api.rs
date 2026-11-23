@@ -337,6 +337,8 @@ struct MuseumRoomView<'a> {
     id: &'a str,
     name: &'a str,
     image_count: usize,
+    /// Whether the slideshow plays this room.
+    slideshow: bool,
     /// One picture to stand for the room on the floor plan.
     cover: Option<&'a ImageEntry>,
     doors: DoorsView<'a>,
@@ -358,6 +360,7 @@ async fn museum(State(state): State<Arc<AppState>>) -> Response {
                 id: &room.id,
                 name: &room.name,
                 image_count: state.images_in(&room.id).len(),
+                slideshow: room.slideshow,
                 cover: state.first_still(&room.id, &marked),
                 doors: doors_view(&state, &room.doors, &marked),
             })
