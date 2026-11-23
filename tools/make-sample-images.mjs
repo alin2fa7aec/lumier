@@ -8,7 +8,8 @@
 //   node tools/make-sample-images.mjs sample-photos [count]
 //
 // Each image carries a row of blocks matching its index, so the wall's sort
-// order is verifiable at a glance.
+// order is verifiable at a glance. One A4 PDF goes alongside, written by hand
+// the same way, so documents can be checked too.
 
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -116,4 +117,40 @@ for (let i = 1; i <= count; i++) {
   console.log(`${name}  ${width}x${height}  ${(png.length / 1024).toFixed(0)} KiB`)
 }
 
-console.log(`\n${count} images in ${outDir}`)
+/// A one-page A4 PDF: a title in a standard font over a few coloured bars,
+/// with the cross-reference offsets worked out as it is written.
+function encodePdf(title) {
+  const escaped = title.replace(/[\\()]/g, (c) => `\\${c}`)
+  const content = [
+    '0.93 0.91 0.87 rg 0 0 595 842 re f',
+    '0.20 0.35 0.55 rg 60 620 475 120 re f',
+    '0.75 0.55 0.30 rg 60 470 300 110 re f',
+    '0.35 0.55 0.40 rg 380 470 155 110 re f',
+    'BT /F1 28 Tf 0.1 0.1 0.1 rg 60 770 Td (' + escaped + ') Tj ET',
+    'BT /F1 12 Tf 0.3 0.3 0.3 rg 60 430 Td (A sample document for lumier.) Tj ET',
+  ].join('\n')
+  const objects = [
+    '<< /Type /Catalog /Pages 2 0 R >>',
+    '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>',
+    `<< /Length ${content.length} >>\nstream\n${content}\nendstream`,
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+  ]
+  let pdf = '%PDF-1.4\n'
+  const offsets = []
+  objects.forEach((object, i) => {
+    offsets.push(Buffer.byteLength(pdf))
+    pdf += `${i + 1} 0 obj\n${object}\nendobj\n`
+  })
+  const xref = Buffer.byteLength(pdf)
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, '0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`
+  return Buffer.from(pdf, 'latin1')
+}
+
+const pdfName = join(outDir, 'notes.pdf')
+writeFileSync(pdfName, encodePdf(`Notes from ${outDir.split('/').pop()}`))
+console.log(`${pdfName}  A4`)
+
+console.log(`\n${count} images and a PDF in ${outDir}`)

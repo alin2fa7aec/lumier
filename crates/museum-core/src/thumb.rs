@@ -10,7 +10,8 @@ use std::io::{BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::str::FromStr;
 
-use crate::probe;
+use crate::library::{Kind, kind_of};
+use crate::{pdf, probe};
 
 /// WebP quality. High enough that screenshot text and UI edges stay clean,
 /// which is where a too-low setting shows first.
@@ -77,6 +78,9 @@ pub enum ThumbError {
 
     #[error("cannot encode WebP: {0}")]
     Encode(String),
+
+    #[error("cannot draw the PDF: {0}")]
+    Pdf(#[source] crate::pdf::PdfError),
 }
 
 /// Decodes `path` and returns a WebP of it, no larger than `size` on its long
@@ -86,6 +90,16 @@ pub enum ThumbError {
 /// full size, which is still worth doing — a WebP of a screenshot is a small
 /// fraction of the source PNG.
 pub fn render(path: &Path, size: ThumbSize) -> Result<Vec<u8>, ThumbError> {
+    // A PDF page is vector art, so it is drawn straight at the asked size
+    // rather than decoded and scaled down.
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    if kind_of(name) == Some(Kind::Pdf) {
+        let page = pdf::render_first_page(path, size.long_edge()).map_err(ThumbError::Pdf)?;
+        return encode_webp(&image::DynamicImage::ImageRgb8(
+            image::DynamicImage::ImageRgba8(page).to_rgb8(),
+        ));
+    }
+
     let file = File::open(path).map_err(ThumbError::Open)?;
     let mut reader = BufReader::new(file);
 

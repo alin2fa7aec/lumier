@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 blake3 = "1.8.7"
+hayro = "0.9.0"
 fast_image_resize = { version = "6.1.0", features = ["image"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 kamadak-exif = "0.6.1"

@@ -1,7 +1,7 @@
-import { Play, Trash2, Undo2 } from 'lucide-react'
+import { ExternalLink, Play, Trash2, Undo2 } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 
-import { formatDuration, imageUrl, provenance, type Room } from './api'
+import { formatDuration, imageUrl, provenance, type ImageEntry, type Room } from './api'
 
 /// How far a finger has to travel before the gesture commits to an axis. Below
 /// this a touch is still a tap.
@@ -26,6 +26,11 @@ export type MarkControl = {
 }
 
 type Gesture = { pointer: number; x: number; y: number; at: number; axis: 'x' | 'y' | null }
+
+/// Opens a PDF in a new tab, where the browser's own viewer shows it.
+function openDocument(image: ImageEntry): void {
+  window.open(imageUrl(image, 'orig'), '_blank', 'noopener')
+}
 
 /// One picture at full size.
 ///
@@ -87,6 +92,10 @@ export function Lightbox({
           if (mark === undefined) return
           mark.onToggle()
           break
+        case 'Enter':
+          if (image?.kind !== 'pdf') return
+          openDocument(image)
+          break
         default:
           return
       }
@@ -94,7 +103,7 @@ export function Lightbox({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [index, last, onMove, onClose, mark])
+  }, [index, last, onMove, onClose, mark, image])
 
   // Styles are written straight onto the elements while a finger is down,
   // rather than through state, so following the finger never waits on a
@@ -223,7 +232,28 @@ export function Lightbox({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      {image.kind === 'video' ? (
+      {image.kind === 'pdf' ? (
+        // The first page, large. Reading the document is the browser's job:
+        // its viewer pages, searches and zooms, and drawing every page here
+        // would mean shipping a PDF renderer to the client.
+        <img
+          ref={(element) => {
+            picture.current = element
+          }}
+          key={image.id}
+          className={`${pictureClass} lightbox__document`}
+          src={imageUrl(image, 2560)}
+          alt={image.name}
+          width={image.w}
+          height={image.h}
+          draggable={false}
+          title="Open the PDF (Enter)"
+          onClick={(event) => {
+            event.stopPropagation()
+            openDocument(image)
+          }}
+        />
+      ) : image.kind === 'video' ? (
         <video
           ref={(element) => {
             picture.current = element
@@ -282,6 +312,21 @@ export function Lightbox({
           title="Slideshow (P)"
         >
           <Play aria-hidden="true" />
+        </button>
+      )}
+      {image.kind === 'pdf' && (
+        <button
+          type="button"
+          className="lightbox__close lightbox__open"
+          onClick={(event) => {
+            event.stopPropagation()
+            openDocument(image)
+          }}
+          aria-label="Open the PDF"
+          aria-keyshortcuts="Enter"
+          title="Open the PDF (Enter)"
+        >
+          <ExternalLink aria-hidden="true" />
         </button>
       )}
       {mark !== undefined && (

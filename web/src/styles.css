@@ -172,6 +172,20 @@ body {
   fill: currentColor;
 }
 
+/* An outline icon, such as the PDF mark, stays unfilled. */
+.frame__badge--outline svg {
+  fill: none;
+}
+
+/* Left of the mark button: opens a PDF in the browser's own viewer. */
+.lightbox__open {
+  inset: 1rem 10rem auto auto;
+}
+
+.lightbox__document {
+  cursor: pointer;
+}
+
 /* The doors standing at one end of a wall: just the next room's name and an
    arrow, set quietly down the middle of the end so the pictures stay the only
    thing to look at. Several stack, and scroll if an end holds more than fit. */

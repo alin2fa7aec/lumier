@@ -67,13 +67,13 @@ function tourOrder(museum: Museum): string[] {
 }
 
 /// The first still at or after `index` going in `delta`'s direction, or null
-/// past the end of the room. Videos are passed over: the show crossfades
-/// pictures on a timer, and a film has neither a rendition to fade nor a
-/// length that fits the interval.
+/// past the end of the room. Videos and PDFs are passed over: the show
+/// crossfades pictures on a timer, and a film has neither a rendition to fade
+/// nor a length that fits the interval, while a document is there to be read.
 function nextStill(room: Room, index: number, delta: 1 | -1): number | null {
   for (let i = index; i >= 0 && i < room.images.length; i += delta) {
     // Videos are passed over, and so is anything marked for deletion.
-    if (room.images[i].kind !== 'video' && room.images[i].marked !== true) return i
+    if (room.images[i].kind === 'image' && room.images[i].marked !== true) return i
   }
   return null
 }

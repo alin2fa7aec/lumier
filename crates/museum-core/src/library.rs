@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::id::ImageId;
 use crate::manifest::Order;
 use crate::path::{self, PathError};
-use crate::{probe, video};
+use crate::{pdf, probe, video};
 
 /// Image formats the viewer handles. HEIC and RAW need a C library
 /// (`libheif` and friends) and are deliberately out of scope for now.
@@ -14,6 +14,8 @@ const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
 /// use another container and are not handled yet.
 const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov"];
 
+const PDF_EXTENSIONS: &[&str] = &["pdf"];
+
 /// What a file on the wall is. The client plays a video where it would show
 /// an image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -21,6 +23,8 @@ const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov"];
 pub enum Kind {
     Image,
     Video,
+    /// Hung as a picture of its first page; opened in the browser's viewer.
+    Pdf,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -225,6 +229,7 @@ impl Library {
             let probed = match kind {
                 Kind::Image => probe::probe(&file),
                 Kind::Video => video::probe(&file),
+                Kind::Pdf => pdf::probe(&file),
             };
             let probed = match probed {
                 Ok(probed) => probed,
@@ -295,6 +300,8 @@ pub(crate) fn kind_of(name: &str) -> Option<Kind> {
         Some(Kind::Image)
     } else if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
         Some(Kind::Video)
+    } else if PDF_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Kind::Pdf)
     } else {
         None
     }
@@ -338,6 +345,7 @@ mod tests {
         assert_eq!(kind_of("a.WebP"), Some(Kind::Image));
         assert_eq!(kind_of("a.MP4"), Some(Kind::Video));
         assert_eq!(kind_of("a.mov"), Some(Kind::Video));
+        assert_eq!(kind_of("a.PDF"), Some(Kind::Pdf));
         assert_eq!(kind_of("a.heic"), None);
         assert_eq!(kind_of("a.txt"), None);
         assert_eq!(kind_of("jpg"), None);

@@ -1,4 +1,4 @@
-import { ChevronLeft, ChevronRight, Play, Trash2, Undo2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, FileText, Play, Trash2, Undo2 } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import {
@@ -176,6 +176,12 @@ export function Wall({
                         decoding="async"
                         draggable={false}
                       />
+                    )}
+                    {image.kind === 'pdf' && (
+                      <span className="frame__badge frame__badge--outline" aria-hidden="true">
+                        <FileText />
+                        PDF
+                      </span>
                     )}
                     {image.marked && (
                       <span className="frame__mark" role="img" aria-label="Marked for deletion">

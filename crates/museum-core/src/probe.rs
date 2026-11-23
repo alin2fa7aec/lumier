@@ -26,6 +26,9 @@ pub enum ProbeError {
 
     #[error("cannot read the video: {0}")]
     Video(#[source] crate::video::VideoError),
+
+    #[error("cannot read the PDF: {0}")]
+    Pdf(#[source] crate::pdf::PdfError),
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -10,6 +10,7 @@ pub mod library;
 pub mod manifest;
 pub mod museum;
 pub mod path;
+pub mod pdf;
 pub mod probe;
 pub mod purge;
 pub mod state;

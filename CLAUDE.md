@@ -93,8 +93,10 @@ cd web && npm run dev
 npm run build --prefix web
 cargo run --bin lumier -- serve --root sample-photos --manifest "$PWD/museum.sample.yaml" --web-dir web/dist
 
-# Nix: the package (binary plus built frontend) and the NixOS module
-nix build .#lumier              # result/bin/lumier, result/share/lumier/web
+# Nix: the package (binary plus built frontend) and the NixOS module.
+# A flake sees only files git tracks, and jj adds a new file to the git index
+# only when it next snapshots, so run a jj command first after adding files.
+jj st && nix build .#lumier     # result/bin/lumier, result/share/lumier/web
 ```
 
 The NAS imports `nix/module.nix` (also `nixosModules.default` in the flake) and
@@ -233,7 +235,7 @@ wrong shape. The frontend puts them on the `<img>` width/height attributes,
 which is what gives the browser an intrinsic aspect ratio and keeps the wall
 from reflowing as pictures load.
 
-An entry also carries `kind` (`image` | `video`), and a video `duration` in
+An entry also carries `kind` (`image` | `video` | `pdf`), and a video `duration` in
 seconds. Videos (MP4/MOV) are probed by `museum_core::video`, which walks the
 ISO BMFF boxes for the `tkhd` size and matrix rather than calling `ffprobe`;
 a quarter-turn matrix swaps `w`/`h` just as EXIF orientation does. **A video
@@ -241,6 +243,17 @@ has no thumbnail**: `/img/{id}/{size}` answers 404 for it, the wall draws its
 opening frame with `<video preload="metadata">` from `orig`, and covers and
 door peeks pick the first still. A room hangs the library root with
 `path: ""`. `docs/design.md` §6.6 records why this departs from the ffmpeg plan.
+
+**A PDF hangs as its first page.** `museum_core::pdf` reads the page size
+(points, rotation and crop box applied) and draws the page with `hayro`, a
+PDF rasterizer in Rust, so no C library is needed at run time — the same
+reasoning as the video probe. A PDF must be parsed whole, so the sizes found
+are remembered per path and version and a rescan rereads only changed files.
+The thumbnail path draws the page straight at the requested size instead of
+decoding and scaling. Parsing and drawing run under `catch_unwind`: a broken
+PDF costs its own thumbnail, not the scan. The lightbox shows the 2560
+rendition and opens `orig` in a new tab for the browser's own viewer. The
+slideshow skips PDFs, as it does videos.
 
 **Only a matching `?v=` earns `Cache-Control: immutable`.** `v` is a short hash
 of (mtime, length). An absent or stale `v` falls back to ServeFile's ETag, which

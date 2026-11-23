@@ -9,8 +9,9 @@ export type ImageEntry = {
   h: number
   /// Content version. Puts the bytes at a URL that can be cached immutably.
   v: string
-  /// A video has no thumbnail renditions; only `orig` exists for it.
-  kind: 'image' | 'video'
+  /// A video has no thumbnail renditions; only `orig` exists for it. A PDF
+  /// hangs as a picture of its first page and opens in the browser's viewer.
+  kind: 'image' | 'video' | 'pdf'
   /// Length in seconds, for videos.
   duration?: number
   /// Marked for deletion: the nightly purge will move it to the trash.
