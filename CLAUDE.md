@@ -12,20 +12,14 @@ rooms. Clicking a picture opens the original over the top of it.
 Three documents, each with one job — keep them that way rather than letting them
 overlap:
 
-- **`docs/status.md`** — where the work stands, what is undecided, what to do
-  next, and the measurements already taken. **Read this first when picking the
-  project back up.**
+- **`.local/status.md`** — where the work stands, what is undecided, what to do
+  next, and the measurements already taken. Gitignored and kept on this machine
+  only. **Read this first when picking the project back up**, and record
+  progress there rather than in this file.
 - **`docs/design.md`** — the authority on the design and the staged plan, and on
   which decisions were deliberate. Read before changing behaviour.
 - **`CLAUDE.md`** (this file) — how to build and run it, and the invariants that
   must survive edits.
-
-Stages 0 through 4 are done, plus a later change to hang the wall in tiers.
-Four stages remain, all untouched: 5 (HEIC, video and PDF alongside images),
-6 (repacking the wall for mixed aspect ratios, and ordering by capture date),
-7 (deploying on the server) and 8 (Markdown notes, with their links resolved
-by file name). `docs/status.md` lists the open questions
-that block them.
 
 The NAS is a self-hosted NixOS machine and lumier runs on it, reading the
 library from local disk. An earlier plan read it over a CIFS mount from a
