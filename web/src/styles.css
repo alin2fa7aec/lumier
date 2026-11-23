@@ -418,6 +418,14 @@ body {
   border-radius: 1px;
 }
 
+/* A PDF on the wall is a link that leaves for the browser's viewer, not a
+   picture that enlarges, so it does not promise a zoom. */
+.frame__button--link {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
 .frame__button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 0.5rem;

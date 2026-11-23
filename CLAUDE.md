@@ -252,9 +252,12 @@ reasoning as the video probe. A PDF must be parsed whole, so the sizes found
 are remembered per path and version and a rescan rereads only changed files.
 The thumbnail path draws the page straight at the requested size instead of
 decoding and scaling. Parsing and drawing run under `catch_unwind`: a broken
-PDF costs its own thumbnail, not the scan. The lightbox shows the 2560
-rendition and opens `orig` in a new tab for the browser's own viewer. The
-slideshow skips PDFs, as it does videos.
+PDF costs its own thumbnail, not the scan. On the wall a PDF is a link
+straight to `orig` in a new tab, for the browser's own viewer, rather than a
+lightbox that could only show the first page again; in selection mode it
+marks like anything else. Stepping onto one in the lightbox shows the 2560
+rendition, with Enter opening `orig`. The slideshow skips PDFs, as it does
+videos.
 
 **A note hangs as a card and its links are resolved by file name.**
 `museum_core::note` gives the card a title and excerpt and a nominal

@@ -148,55 +148,78 @@ export function Wall({
           <div className="band" key={bandIndex}>
             {band.map((index) => {
               const image = room.images[index]
+              const content = (
+                <>
+                  {image.kind === 'video' ? (
+                    <VideoFrame image={image} />
+                  ) : image.kind === 'markdown' ? (
+                    <NoteCard image={image} />
+                  ) : (
+                    <img
+                      src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
+                      alt={image.name}
+                      width={image.w}
+                      height={image.h}
+                      loading="lazy"
+                      decoding="async"
+                      draggable={false}
+                    />
+                  )}
+                  {image.kind === 'pdf' && (
+                    <span className="frame__badge frame__badge--outline" aria-hidden="true">
+                      <FileText />
+                      PDF
+                    </span>
+                  )}
+                  {image.marked && (
+                    <span className="frame__mark" role="img" aria-label="Marked for deletion">
+                      <Trash2 aria-hidden="true" />
+                    </span>
+                  )}
+                  {image.restore && (
+                    <span className="frame__mark" role="img" aria-label="To be restored">
+                      <Undo2 aria-hidden="true" />
+                    </span>
+                  )}
+                </>
+              )
               return (
                 <figure
                   className={`frame${image.marked ? ' frame--marked' : ''}${image.restore ? ' frame--restore' : ''}`}
                   key={image.id}
                 >
-                  <button
-                    type="button"
-                    className="frame__button"
-                    onClick={() => onOpenImage(index)}
-                    title={provenance(image) ?? undefined}
-                    aria-pressed={selecting ? Boolean(image.marked || image.restore) : undefined}
-                    aria-label={
-                      selecting
-                        ? `Toggle mark on ${image.name}`
-                        : `${image.kind === 'video' ? 'Play' : image.kind === 'markdown' ? 'Read' : 'Open'} ${image.name}`
-                    }
-                  >
-                    {image.kind === 'video' ? (
-                      <VideoFrame image={image} />
-                    ) : image.kind === 'markdown' ? (
-                      <NoteCard image={image} />
-                    ) : (
-                      <img
-                        src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
-                        alt={image.name}
-                        width={image.w}
-                        height={image.h}
-                        loading="lazy"
-                        decoding="async"
-                        draggable={false}
-                      />
-                    )}
-                    {image.kind === 'pdf' && (
-                      <span className="frame__badge frame__badge--outline" aria-hidden="true">
-                        <FileText />
-                        PDF
-                      </span>
-                    )}
-                    {image.marked && (
-                      <span className="frame__mark" role="img" aria-label="Marked for deletion">
-                        <Trash2 aria-hidden="true" />
-                      </span>
-                    )}
-                    {image.restore && (
-                      <span className="frame__mark" role="img" aria-label="To be restored">
-                        <Undo2 aria-hidden="true" />
-                      </span>
-                    )}
-                  </button>
+                  {image.kind === 'pdf' && !selecting ? (
+                    // A PDF goes straight to the browser's viewer: the
+                    // lightbox could only show its first page again. A real
+                    // link, so a middle click or a long press offers the
+                    // usual choices. Selecting still marks it like any other.
+                    <a
+                      className="frame__button frame__button--link"
+                      href={imageUrl(image, 'orig')}
+                      target="_blank"
+                      rel="noopener"
+                      title={provenance(image) ?? undefined}
+                      aria-label={`Open ${image.name}`}
+                      draggable={false}
+                    >
+                      {content}
+                    </a>
+                  ) : (
+                    <button
+                      type="button"
+                      className="frame__button"
+                      onClick={() => onOpenImage(index)}
+                      title={provenance(image) ?? undefined}
+                      aria-pressed={selecting ? Boolean(image.marked || image.restore) : undefined}
+                      aria-label={
+                        selecting
+                          ? `Toggle mark on ${image.name}`
+                          : `${image.kind === 'video' ? 'Play' : image.kind === 'markdown' ? 'Read' : 'Open'} ${image.name}`
+                      }
+                    >
+                      {content}
+                    </button>
+                  )}
                 </figure>
               )
             })}
