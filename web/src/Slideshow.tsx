@@ -1,7 +1,8 @@
-import { Pause, Timer, X } from 'lucide-react'
+import { Maximize, Minimize, Pause, Timer, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { fetchRoom, imageUrl, THUMB_SIZES, type ImageEntry, type Museum, type Room } from './api'
+import { useFullscreen, useWakeLock } from './screen'
 
 /// How long each picture can stay up once it is fully shown, in seconds,
 /// offered in a dropdown. Doubling from a minute suits a photo frame, where
@@ -213,6 +214,10 @@ export function Slideshow({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // A photo frame left running should not go dark, nor show browser chrome.
+  useWakeLock(true)
+  const fullscreen = useFullscreen()
+
   const current = slides.current
   const position = useMemo<Position>(
     () => (current === null ? start : { roomId: current.room.id, index: current.index }),
@@ -270,6 +275,10 @@ export function Slideshow({
         case 'Escape':
           onExit(position)
           break
+        case 'f':
+        case 'F':
+          fullscreen.toggle()
+          break
         default:
           return
       }
@@ -277,7 +286,7 @@ export function Slideshow({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [go, position, onStop, onExit])
+  }, [go, position, onStop, onExit, fullscreen])
 
   const previous = slides.previous
 
@@ -343,6 +352,19 @@ export function Slideshow({
             ))}
           </select>
         </label>
+        {fullscreen.supported && (
+          <button
+            type="button"
+            className="lightbox__close slideshow__fullscreen"
+            onClick={fullscreen.toggle}
+            aria-pressed={fullscreen.on}
+            aria-label={fullscreen.on ? 'Exit fullscreen' : 'Fullscreen'}
+            aria-keyshortcuts="F"
+            title={fullscreen.on ? 'Exit fullscreen (F)' : 'Fullscreen (F)'}
+          >
+            {fullscreen.on ? <Minimize aria-hidden="true" /> : <Maximize aria-hidden="true" />}
+          </button>
+        )}
         <button
           type="button"
           className="lightbox__close lightbox__play"

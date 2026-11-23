@@ -718,12 +718,17 @@ body {
   stroke-width: 1.75;
 }
 
-/* Left of the pause button: a pill holding a native dropdown, so phones get
+/* Left of the pause button. */
+.slideshow__fullscreen {
+  inset: 1rem 7rem auto auto;
+}
+
+/* Left of the fullscreen button: a pill holding a native dropdown, so phones get
    their own picker. The select is stripped to its text and the pill draws
    the frame, with a chevron in place of the platform arrow. */
 .slideshow__interval {
   position: fixed;
-  inset: 1rem 7rem auto auto;
+  inset: 1rem 10rem auto auto;
   height: 2.5rem;
   display: flex;
   align-items: center;
