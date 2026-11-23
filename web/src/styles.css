@@ -707,27 +707,97 @@ body {
 
 /* ---- the floor plan ---- */
 
-/* Columns are distance from the entrance, and the whole thing scrolls
-   sideways — the same gesture as walking a wall. */
+/* The tree of rooms, then any columns standing apart from it. The whole
+   thing scrolls sideways — the same gesture as walking a wall — and down as
+   well when a branch runs long. */
 .plan__columns {
+  --plan-card: 11rem;
+  --plan-link: 1.5rem;
+  --plan-gap: 0.5rem;
+  --plan-line: #ffffff2e;
   height: 100%;
   display: flex;
   align-items: start;
-  gap: 1rem;
+  gap: 2rem;
   padding: clamp(2rem, 6vh, 4.5rem) clamp(1rem, 4vw, 3rem);
-  overflow-x: auto;
-  overflow-y: hidden;
+  overflow: auto;
   cursor: default;
+}
+
+/* Columns are distance from the entrance, alternating with narrow columns
+   for the lines; rows are set per room from JS, so each branch keeps to its
+   own run of rows. */
+.plan__tree {
+  flex: none;
+  display: grid;
+  row-gap: var(--plan-gap);
+}
+
+.plan__cell {
+  display: grid;
+  align-self: center;
+}
+
+/* The line from a parent to its onward rooms. The horizontal stroke meets
+   the card at the middle of the row; the vertical one joins the siblings,
+   carried across the row gap below so the run is unbroken. */
+.plan__link {
+  position: relative;
+}
+
+.plan__link::before,
+.plan__link::after {
+  content: '';
+  position: absolute;
+}
+
+.plan__link::before {
+  top: 50%;
+  left: 50%;
+  right: 0;
+  border-top: 1px solid var(--plan-line);
+}
+
+.plan__link--only::before,
+.plan__link--first::before {
+  left: 0;
+}
+
+.plan__link::after {
+  left: 50%;
+  border-left: 1px solid var(--plan-line);
+}
+
+.plan__link--only::after {
+  display: none;
+}
+
+.plan__link--first::after {
+  top: 50%;
+  bottom: calc(-1 * var(--plan-gap));
+}
+
+.plan__link--pass::before {
+  display: none;
+}
+
+.plan__link--middle::after,
+.plan__link--pass::after {
+  top: 0;
+  bottom: calc(-1 * var(--plan-gap));
+}
+
+.plan__link--last::after {
+  top: 0;
+  bottom: 50%;
 }
 
 .plan__column {
   flex: none;
-  width: 11rem;
-  max-height: 100%;
+  width: var(--plan-card);
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  overflow-y: auto;
+  gap: var(--plan-gap);
 }
 
 .card {

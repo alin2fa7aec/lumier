@@ -373,10 +373,14 @@ blocked site data must never fail a render over a convenience.
 
 ### The floor plan
 
-`FloorPlan.tsx` groups rooms by breadth-first distance from the entrance and
-scrolls sideways, one column per distance. This shows the museum's shape without
-a graph-layout algorithm: a corridor reads as a long row of single-room columns,
-a hub as one tall column — and the gesture matches the rest of the app.
+`FloorPlan.tsx` lays rooms out as the breadth-first tree the doors make from
+the entrance: one column per distance, and each room's onward rooms in the next
+column starting on its own row, joined to it by lines drawn in narrow columns
+between. A CSS grid places them, rows from JS, so a branch keeps to its own run
+of rows and two rooms at the same distance under different parents never read
+as one flat list. A corridor still reads as a long row, a hub as one tall
+column, and the plan scrolls sideways (and down when a branch runs long). A room
+reachable from two parents shows once, under the one that reached it first.
 
 It is **a way to move, not an orientation aid**: doors alone make a deep graph
 impractical, which `ss/` demonstrates — `ac_valhalla` sits 21 doors from the
