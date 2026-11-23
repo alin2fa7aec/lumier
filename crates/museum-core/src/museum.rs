@@ -332,7 +332,7 @@ fn holds_images(dir: &Path) -> bool {
             && entry
                 .file_name()
                 .to_str()
-                .is_some_and(library::is_supported_image)
+                .is_some_and(|name| library::kind_of(name).is_some())
     })
 }
 

@@ -11,9 +11,10 @@ pub mod museum;
 pub mod path;
 pub mod probe;
 pub mod thumb;
+pub mod video;
 
 pub use id::ImageId;
-pub use library::{ImageEntry, Library, ScanError, ScanStats};
+pub use library::{ImageEntry, Kind, Library, ScanError, ScanStats};
 pub use manifest::{Manifest, ManifestError, Side};
 pub use museum::{Door, Doors, Museum, Room, Validated};
 pub use path::PathError;

@@ -1,13 +1,26 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::id::ImageId;
 use crate::path::{self, PathError};
-use crate::probe;
+use crate::{probe, video};
 
 /// Image formats the viewer handles. HEIC and RAW need a C library
 /// (`libheif` and friends) and are deliberately out of scope for now.
-const SUPPORTED_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
+const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "webp", "gif"];
+
+/// Video containers whose boxes [`video::probe`] can read. WebM and the like
+/// use another container and are not handled yet.
+const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov"];
+
+/// What a file on the wall is. The client plays a video where it would show
+/// an image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    Image,
+    Video,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ScanError {
@@ -34,6 +47,10 @@ pub struct ImageEntry {
     pub h: u32,
     /// Content version, for immutable caching of the image URL.
     pub v: String,
+    pub kind: Kind,
+    /// Length in seconds, for videos.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration: Option<f64>,
     /// Root-relative, `/`-separated. Not exposed over the API.
     #[serde(skip)]
     pub rel_path: String,
@@ -87,8 +104,7 @@ impl Library {
             source,
         })?;
 
-        let mut entries = Vec::new();
-        let mut stats = ScanStats::default();
+        let mut candidates = Vec::new();
 
         for item in read {
             let item = match item {
@@ -111,7 +127,27 @@ impl Library {
                 continue;
             };
 
-            if !item.file_type().is_ok_and(|kind| kind.is_file()) || !is_supported_image(name) {
+            if !item.file_type().is_ok_and(|kind| kind.is_file()) {
+                continue;
+            }
+            if let Some(kind) = kind_of(name) {
+                candidates.push((name.to_owned(), kind));
+            }
+        }
+
+        // A Live Photo is a still and a short movie under one name. The movie
+        // belongs to the still rather than standing as a work of its own.
+        let stills: HashSet<String> = candidates
+            .iter()
+            .filter(|(_, kind)| *kind == Kind::Image)
+            .filter_map(|(name, _)| stem_of(name))
+            .collect();
+
+        let mut entries = Vec::new();
+        let mut stats = ScanStats::default();
+
+        for (name, kind) in candidates {
+            if kind == Kind::Video && stem_of(&name).is_some_and(|stem| stills.contains(&stem)) {
                 continue;
             }
 
@@ -133,10 +169,14 @@ impl Library {
                 }
             };
 
-            let probed = match probe::probe(&file) {
+            let probed = match kind {
+                Kind::Image => probe::probe(&file),
+                Kind::Video => video::probe(&file),
+            };
+            let probed = match probed {
                 Ok(probed) => probed,
                 Err(error) => {
-                    tracing::warn!(%rel_path, %error, "skipping unprobeable image");
+                    tracing::warn!(%rel_path, %error, "skipping unprobeable file");
                     stats.unreadable += 1;
                     continue;
                 }
@@ -146,10 +186,12 @@ impl Library {
             self.index.insert(id, rel_path.clone());
             entries.push(ImageEntry {
                 id,
-                name: name.to_owned(),
+                name,
                 w: probed.width,
                 h: probed.height,
                 v: probed.version,
+                kind,
+                duration: probed.duration,
                 rel_path,
             });
         }
@@ -179,14 +221,21 @@ impl Library {
     }
 }
 
-pub(crate) fn is_supported_image(name: &str) -> bool {
-    Path::new(name)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(|ext| {
-            let ext = ext.to_ascii_lowercase();
-            SUPPORTED_EXTENSIONS.contains(&ext.as_str())
-        })
+/// What a file name says the file is, or `None` for a file the wall skips.
+pub(crate) fn kind_of(name: &str) -> Option<Kind> {
+    let ext = Path::new(name).extension()?.to_str()?.to_ascii_lowercase();
+    if IMAGE_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Kind::Image)
+    } else if VIDEO_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Kind::Video)
+    } else {
+        None
+    }
+}
+
+/// The name without its extension, folded for comparison.
+fn stem_of(name: &str) -> Option<String> {
+    Some(Path::new(name).file_stem()?.to_str()?.to_lowercase())
 }
 
 #[cfg(test)]
@@ -195,13 +244,15 @@ mod tests {
 
     #[test]
     fn recognizes_supported_extensions_case_insensitively() {
-        assert!(is_supported_image("a.jpg"));
-        assert!(is_supported_image("a.JPEG"));
-        assert!(is_supported_image("a.WebP"));
-        assert!(!is_supported_image("a.heic"));
-        assert!(!is_supported_image("a.txt"));
-        assert!(!is_supported_image("jpg"));
-        assert!(!is_supported_image("a.jpg.txt"));
+        assert_eq!(kind_of("a.jpg"), Some(Kind::Image));
+        assert_eq!(kind_of("a.JPEG"), Some(Kind::Image));
+        assert_eq!(kind_of("a.WebP"), Some(Kind::Image));
+        assert_eq!(kind_of("a.MP4"), Some(Kind::Video));
+        assert_eq!(kind_of("a.mov"), Some(Kind::Video));
+        assert_eq!(kind_of("a.heic"), None);
+        assert_eq!(kind_of("a.txt"), None);
+        assert_eq!(kind_of("jpg"), None);
+        assert_eq!(kind_of("a.jpg.txt"), None);
     }
 
     #[test]

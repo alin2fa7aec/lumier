@@ -21,9 +21,12 @@ pub enum ProbeError {
 
     #[error("cannot rewind after reading EXIF: {0}")]
     Rewind(#[source] std::io::Error),
+
+    #[error("cannot read the video: {0}")]
+    Video(#[source] crate::video::VideoError),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Probe {
     /// Displayed width, with EXIF orientation already applied.
     pub width: u32,
@@ -32,6 +35,8 @@ pub struct Probe {
     /// Short hash of (modification time, length). Changes when the file is
     /// replaced, which is what lets image URLs be cached immutably.
     pub version: String,
+    /// Length in seconds. Only videos have one.
+    pub duration: Option<f64>,
 }
 
 pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
@@ -65,6 +70,7 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         width,
         height,
         version: version_of(&metadata),
+        duration: None,
     })
 }
 
@@ -81,7 +87,7 @@ pub(crate) fn read_orientation<R: std::io::BufRead + Seek>(reader: &mut R) -> Op
         .get_uint(0)
 }
 
-fn version_of(metadata: &std::fs::Metadata) -> String {
+pub(crate) fn version_of(metadata: &std::fs::Metadata) -> String {
     let modified = metadata
         .modified()
         .ok()

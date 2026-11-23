@@ -65,6 +65,17 @@ function tourOrder(museum: Museum): string[] {
   return order
 }
 
+/// The first still at or after `index` going in `delta`'s direction, or null
+/// past the end of the room. Videos are passed over: the show crossfades
+/// pictures on a timer, and a film has neither a rendition to fade nor a
+/// length that fits the interval.
+function nextStill(room: Room, index: number, delta: 1 | -1): number | null {
+  for (let i = index; i >= 0 && i < room.images.length; i += delta) {
+    if (room.images[i].kind !== 'video') return i
+  }
+  return null
+}
+
 /// The smallest rendition that fills the screen.
 ///
 /// A rendition rather than `orig`, unlike the lightbox: a slideshow is a
@@ -135,8 +146,8 @@ export function Slideshow({
   const step = useCallback(
     async (from: Position, delta: 1 | -1): Promise<{ room: Room; index: number }> => {
       const here = await loadRoom(from.roomId)
-      const index = from.index + delta
-      if (index >= 0 && index < here.images.length) return { room: here, index }
+      const index = nextStill(here, from.index + delta, delta)
+      if (index !== null) return { room: here, index }
 
       const at = Math.max(order.indexOf(from.roomId), 0)
       // Up to a full lap, which comes back to this room when it is the only
@@ -145,8 +156,9 @@ export function Slideshow({
         const id = order[(at + delta * k + order.length * k) % order.length]
         if (counts.get(id) === 0) continue
         const room = await loadRoom(id)
-        if (room.images.length === 0) continue
-        return { room, index: delta > 0 ? 0 : room.images.length - 1 }
+        const first = nextStill(room, delta > 0 ? 0 : room.images.length - 1, delta)
+        if (first === null) continue
+        return { room, index: first }
       }
       throw new Error('流せる写真がありません')
     },

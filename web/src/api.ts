@@ -9,6 +9,10 @@ export type ImageEntry = {
   h: number
   /// Content version. Puts the bytes at a URL that can be cached immutably.
   v: string
+  /// A video has no thumbnail renditions; only `orig` exists for it.
+  kind: 'image' | 'video'
+  /// Length in seconds, for videos.
+  duration?: number
 }
 
 export type Door = {
@@ -65,6 +69,15 @@ export const THUMB_SIZES = [320, 640, 1280, 2560] as const
 export type ThumbSize = (typeof THUMB_SIZES)[number]
 /// `orig` is the untouched source file — for the lightbox, never for the wall.
 export type Rendition = ThumbSize | 'orig'
+
+/// A video's length as the wall labels it: `4:39`, or `1:02:03` past an hour.
+export function formatDuration(seconds: number): string {
+  const whole = Math.round(seconds)
+  const s = String(whole % 60).padStart(2, '0')
+  const m = Math.floor(whole / 60) % 60
+  const h = Math.floor(whole / 3600)
+  return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${s}` : `${m}:${s}`
+}
 
 export function imageUrl(image: ImageEntry, rendition: Rendition): string {
   return `/img/${image.id}/${rendition}?v=${encodeURIComponent(image.v)}`

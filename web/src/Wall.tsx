@@ -1,7 +1,14 @@
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Play } from 'lucide-react'
 import { useEffect, useLayoutEffect, useRef } from 'react'
 
-import { imageUrl, pickRendition, type Door, type Room } from './api'
+import {
+  formatDuration,
+  imageUrl,
+  pickRendition,
+  type Door,
+  type ImageEntry,
+  type Room,
+} from './api'
 import { enterRoom, type ArriveAt } from './route'
 import { recall, remember } from './scrollMemory'
 
@@ -126,23 +133,56 @@ export function Wall({
               type="button"
               className="frame__button"
               onClick={() => onOpenImage(index)}
-              aria-label={`${image.name} を拡大`}
+              aria-label={`${image.name} を${image.kind === 'video' ? '再生' : '拡大'}`}
             >
-              <img
-                src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
-                alt={image.name}
-                width={image.w}
-                height={image.h}
-                loading="lazy"
-                decoding="async"
-                draggable={false}
-              />
+              {image.kind === 'video' ? (
+                <VideoFrame image={image} />
+              ) : (
+                <img
+                  src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
+                  alt={image.name}
+                  width={image.w}
+                  height={image.h}
+                  loading="lazy"
+                  decoding="async"
+                  draggable={false}
+                />
+              )}
             </button>
           </figure>
         ))}
       </div>
       <DoorGroup doors={room.doors.right} side="right" />
     </div>
+  )
+}
+
+/// A video as it hangs on the wall: its opening frame, never playing, with a
+/// play mark and its length so it is not mistaken for a photo.
+///
+/// The browser draws the frame from the source itself — `preload="metadata"`
+/// plus a media fragment fetches the header and one keyframe by Range, not
+/// the whole file. There is no server-side thumbnail because rendering one
+/// needs a video decoder, and the server deliberately has none.
+function VideoFrame({ image }: { image: ImageEntry }) {
+  return (
+    <span className="frame__video">
+      <video
+        src={`${imageUrl(image, 'orig')}#t=0.1`}
+        width={image.w}
+        height={image.h}
+        preload="metadata"
+        muted
+        playsInline
+        disablePictureInPicture
+        tabIndex={-1}
+        aria-hidden="true"
+      />
+      <span className="frame__badge">
+        <Play aria-hidden="true" />
+        {image.duration !== undefined && formatDuration(image.duration)}
+      </span>
+    </span>
   )
 }
 

@@ -187,6 +187,15 @@ wrong shape. The frontend puts them on the `<img>` width/height attributes,
 which is what gives the browser an intrinsic aspect ratio and keeps the wall
 from reflowing as pictures load.
 
+An entry also carries `kind` (`image` | `video`), and a video `duration` in
+seconds. Videos (MP4/MOV) are probed by `museum_core::video`, which walks the
+ISO BMFF boxes for the `tkhd` size and matrix rather than calling `ffprobe`;
+a quarter-turn matrix swaps `w`/`h` just as EXIF orientation does. **A video
+has no thumbnail**: `/img/{id}/{size}` answers 404 for it, the wall draws its
+opening frame with `<video preload="metadata">` from `orig`, and covers and
+door peeks pick the first still. A room hangs the library root with
+`path: ""`. `docs/design.md` §6.6 records why this departs from the ffmpeg plan.
+
 **Only a matching `?v=` earns `Cache-Control: immutable`.** `v` is a short hash
 of (mtime, length). An absent or stale `v` falls back to ServeFile's ETag, which
 revalidates — marking the bare id immutable would serve a replaced file from

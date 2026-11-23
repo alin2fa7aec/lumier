@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -8,7 +8,7 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::{Json, Router, routing::get};
 use museum_core::museum::{Door, Doors};
-use museum_core::{ImageEntry, ImageId, Library, Museum, ThumbSize};
+use museum_core::{ImageEntry, ImageId, Kind, Library, Museum, ThumbSize};
 
 use crate::thumbs::Thumbnailer;
 use tower::ServiceExt;
@@ -23,6 +23,8 @@ pub struct AppState {
     /// Current content version per image, so a request's `?v=` can be checked
     /// before the response is marked immutable.
     versions: HashMap<ImageId, String>,
+    /// Videos have no thumbnail: the client draws their frame itself.
+    videos: HashSet<ImageId>,
     pub thumbs: Thumbnailer,
 }
 
@@ -38,17 +40,31 @@ impl AppState {
             .flatten()
             .map(|image| (image.id, image.v.clone()))
             .collect();
+        let videos = images
+            .values()
+            .flatten()
+            .filter(|image| image.kind == Kind::Video)
+            .map(|image| image.id)
+            .collect();
         Self {
             library,
             museum,
             images,
             versions,
+            videos,
             thumbs,
         }
     }
 
     fn images_in(&self, room_id: &str) -> &[ImageEntry] {
         self.images.get(room_id).map_or(&[], Vec::as_slice)
+    }
+
+    /// The first still in a room, to stand for it where a thumbnail is drawn.
+    fn first_still(&self, room_id: &str) -> Option<&ImageEntry> {
+        self.images_in(room_id)
+            .iter()
+            .find(|image| image.kind == Kind::Image)
     }
 }
 
@@ -82,7 +98,7 @@ fn door_view<'a>(state: &'a AppState, door: &'a Door) -> DoorView<'a> {
     DoorView {
         to: &door.to,
         name: &door.name,
-        peek: state.images_in(&door.to).first(),
+        peek: state.first_still(&door.to),
     }
 }
 
@@ -121,7 +137,7 @@ async fn museum(State(state): State<Arc<AppState>>) -> Response {
                 id: &room.id,
                 name: &room.name,
                 image_count: state.images_in(&room.id).len(),
-                cover: state.images_in(&room.id).first(),
+                cover: state.first_still(&room.id),
                 doors: doors_view(&state, &room.doors),
             })
             .collect(),
@@ -200,6 +216,9 @@ async fn image(
     let path = match rendition {
         Rendition::Original => source,
         Rendition::Thumb(size) => {
+            if state.videos.contains(&image_id) {
+                return StatusCode::NOT_FOUND.into_response();
+            }
             // The cache entry is keyed on the version of the file that is on
             // disk now, not on whatever `?v=` the client happened to send: a
             // stale query must never label a freshly rendered thumbnail.

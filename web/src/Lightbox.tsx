@@ -1,7 +1,7 @@
 import { Play } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 
-import { imageUrl, type Room } from './api'
+import { formatDuration, imageUrl, type Room } from './api'
 
 /// How far a finger has to travel before the gesture commits to an axis. Below
 /// this a touch is still a tap.
@@ -48,7 +48,9 @@ export function Lightbox({
   const last = room.images.length - 1
 
   const backdrop = useRef<HTMLDivElement>(null)
-  const picture = useRef<HTMLImageElement>(null)
+  // An <img> or, for a video, a <video>; set through a callback ref because
+  // the two element types do not share a ref object type.
+  const picture = useRef<HTMLElement | null>(null)
   const gesture = useRef<Gesture | null>(null)
   const ignoreClicksUntil = useRef(0)
   // Which side the incoming picture slides in from, so it arrives from where
@@ -115,6 +117,8 @@ export function Lightbox({
       settle()
       return
     }
+    // A video's own controls take the touch: scrubbing must not page away.
+    if ((event.target as HTMLElement).closest('video') !== null) return
     // Zoomed in, a drag is for looking around the picture.
     if ((window.visualViewport?.scale ?? 1) > 1.01) return
     gesture.current = {
@@ -174,6 +178,7 @@ export function Lightbox({
   }
 
   if (image === undefined) return null
+  const pictureClass = `lightbox__image${enterFrom === null ? '' : ` lightbox__image--from-${enterFrom}`}`
 
   return (
     <div
@@ -192,24 +197,45 @@ export function Lightbox({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      <img
-        ref={picture}
-        // A fresh element per picture, so the entrance animation replays and
-        // no transform from the swipe that brought it here lingers.
-        key={image.id}
-        className={`lightbox__image${enterFrom === null ? '' : ` lightbox__image--from-${enterFrom}`}`}
-        src={imageUrl(image, 'orig')}
-        alt={image.name}
-        width={image.w}
-        height={image.h}
-        draggable={false}
-        // The backdrop closes on click; the picture itself should not.
-        onClick={(event) => event.stopPropagation()}
-      />
+      {image.kind === 'video' ? (
+        <video
+          ref={(element) => {
+            picture.current = element
+          }}
+          key={image.id}
+          className={pictureClass}
+          src={imageUrl(image, 'orig')}
+          width={image.w}
+          height={image.h}
+          controls
+          autoPlay
+          playsInline
+          onClick={(event) => event.stopPropagation()}
+        />
+      ) : (
+        <img
+          ref={(element) => {
+            picture.current = element
+          }}
+          // A fresh element per picture, so the entrance animation replays and
+          // no transform from the swipe that brought it here lingers.
+          key={image.id}
+          className={pictureClass}
+          src={imageUrl(image, 'orig')}
+          alt={image.name}
+          width={image.w}
+          height={image.h}
+          draggable={false}
+          // The backdrop closes on click; the picture itself should not.
+          onClick={(event) => event.stopPropagation()}
+        />
+      )}
       <p className="lightbox__caption">
         {image.name}
         <span>
-          {image.w}×{image.h} · {index + 1} / {room.images.length}
+          {image.w}×{image.h}
+          {image.duration !== undefined && ` · ${formatDuration(image.duration)}`} · {index + 1} /{' '}
+          {room.images.length}
         </span>
       </p>
       {onPlay !== undefined && (
