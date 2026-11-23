@@ -11,7 +11,10 @@ use std::sync::Arc;
 use anyhow::Context;
 use api::{AppState, Snapshot, TrashScan};
 use clap::{Args, Parser, Subcommand};
-use museum_core::{Date, ImageEntry, Library, Manifest, Museum, Order, StateDir, museum, purge};
+use museum_core::note::{self, LinkIndex, Resolution};
+use museum_core::{
+    Date, ImageEntry, Kind, Library, Manifest, Museum, Order, StateDir, museum, purge,
+};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -256,6 +259,53 @@ fn log_rescan(trigger: &str, result: Result<api::RescanReport, api::RescanError>
     }
 }
 
+/// Links in notes that lead nowhere, or to a name several rooms share.
+/// Reported by `check` only: a broken link costs a reader nothing but the
+/// link, and is marked where it stands.
+fn note_link_warnings(loaded: &Loaded) -> Vec<String> {
+    let index = LinkIndex::new(
+        loaded
+            .images
+            .iter()
+            .map(|(room, entries)| (room.as_str(), entries.as_slice())),
+    );
+    let mut warnings = Vec::new();
+    for room in loaded.museum.rooms() {
+        let notes = loaded
+            .images
+            .get(&room.id)
+            .into_iter()
+            .flatten()
+            .filter(|entry| entry.kind == Kind::Markdown);
+        for entry in notes {
+            let Some(path) = loaded.library.image_path(&entry.id) else {
+                continue;
+            };
+            let Ok(markdown) = note::read(&path) else {
+                warnings.push(format!(
+                    "note {} in room {:?} cannot be read",
+                    entry.name, room.id
+                ));
+                continue;
+            };
+            let rendered = note::render(&markdown, &|name| index.resolve(name, &room.id));
+            for issue in rendered.issues {
+                warnings.push(match issue.resolution {
+                    Resolution::Ambiguous(count) => format!(
+                        "note {} in room {:?} links to {}, a name {count} files share outside its room; none is picked",
+                        entry.name, room.id, issue.name
+                    ),
+                    _ => format!(
+                        "note {} in room {:?} links to {}, which no room hangs",
+                        entry.name, room.id, issue.name
+                    ),
+                });
+            }
+        }
+    }
+    warnings
+}
+
 /// Scans the trash: each day folder, and everything nested in it, newest
 /// day first. A missing trash is simply empty, since nothing has been
 /// purged yet; one that cannot be read is logged and left out.
@@ -383,11 +433,13 @@ fn check(args: &LibraryArgs) -> anyhow::Result<ExitCode> {
         );
     }
 
-    if loaded.warnings.is_empty() {
+    let mut warnings = loaded.warnings.clone();
+    warnings.extend(note_link_warnings(&loaded));
+    if warnings.is_empty() {
         println!("\nno warnings");
     } else {
-        println!("\n{} warnings:", loaded.warnings.len());
-        println!("{}", bullets(&loaded.warnings));
+        println!("\n{} warnings:", warnings.len());
+        println!("{}", bullets(&warnings));
     }
     Ok(ExitCode::SUCCESS)
 }

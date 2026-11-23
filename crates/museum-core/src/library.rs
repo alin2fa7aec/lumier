@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use crate::id::ImageId;
 use crate::manifest::Order;
 use crate::path::{self, PathError};
-use crate::{pdf, probe, video};
+use crate::{note, pdf, probe, video};
 
 /// Image formats the viewer handles. HEIC and RAW need a C library
 /// (`libheif` and friends) and are deliberately out of scope for now.
@@ -16,6 +16,8 @@ const VIDEO_EXTENSIONS: &[&str] = &["mp4", "m4v", "mov"];
 
 const PDF_EXTENSIONS: &[&str] = &["pdf"];
 
+const NOTE_EXTENSIONS: &[&str] = &["md", "markdown"];
+
 /// What a file on the wall is. The client plays a video where it would show
 /// an image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -25,6 +27,8 @@ pub enum Kind {
     Video,
     /// Hung as a picture of its first page; opened in the browser's viewer.
     Pdf,
+    /// A note, hung as a card with its title and opening lines.
+    Markdown,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +60,12 @@ pub struct ImageEntry {
     /// Length in seconds, for videos.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration: Option<f64>,
+    /// For a note, its first heading.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// For a note, its opening text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub excerpt: Option<String>,
     /// Root-relative, `/`-separated. Not exposed over the API.
     #[serde(skip)]
     pub rel_path: String,
@@ -230,6 +240,7 @@ impl Library {
                 Kind::Image => probe::probe(&file),
                 Kind::Video => video::probe(&file),
                 Kind::Pdf => pdf::probe(&file),
+                Kind::Markdown => note::probe(&file),
             };
             let probed = match probed {
                 Ok(probed) => probed,
@@ -257,6 +268,8 @@ impl Library {
                     v: probed.version,
                     kind,
                     duration: probed.duration,
+                    title: probed.card.as_ref().and_then(|card| card.title.clone()),
+                    excerpt: probed.card.map(|card| card.excerpt),
                     rel_path,
                 },
             ));
@@ -302,6 +315,8 @@ pub(crate) fn kind_of(name: &str) -> Option<Kind> {
         Some(Kind::Video)
     } else if PDF_EXTENSIONS.contains(&ext.as_str()) {
         Some(Kind::Pdf)
+    } else if NOTE_EXTENSIONS.contains(&ext.as_str()) {
+        Some(Kind::Markdown)
     } else {
         None
     }
@@ -346,6 +361,7 @@ mod tests {
         assert_eq!(kind_of("a.MP4"), Some(Kind::Video));
         assert_eq!(kind_of("a.mov"), Some(Kind::Video));
         assert_eq!(kind_of("a.PDF"), Some(Kind::Pdf));
+        assert_eq!(kind_of("a.md"), Some(Kind::Markdown));
         assert_eq!(kind_of("a.heic"), None);
         assert_eq!(kind_of("a.txt"), None);
         assert_eq!(kind_of("jpg"), None);

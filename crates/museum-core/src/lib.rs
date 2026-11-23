@@ -9,6 +9,7 @@ pub mod id;
 pub mod library;
 pub mod manifest;
 pub mod museum;
+pub mod note;
 pub mod path;
 pub mod pdf;
 pub mod probe;

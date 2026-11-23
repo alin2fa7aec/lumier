@@ -39,6 +39,7 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         duration: movie.duration,
         taken: movie.created,
         modified: modified_of(&metadata),
+        card: None,
     })
 }
 

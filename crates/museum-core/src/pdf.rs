@@ -82,6 +82,7 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         // taken; the modification time serves as well.
         taken: None,
         modified: modified_of(&metadata),
+        card: None,
     })
 }
 
@@ -162,7 +163,10 @@ mod tests {
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {width} {height}] /Contents 4 0 R >>"
             ),
-            format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+            format!(
+                "<< /Length {} >>\nstream\n{content}\nendstream",
+                content.len()
+            ),
         ];
         let mut pdf = b"%PDF-1.4\n".to_vec();
         let mut offsets = Vec::new();

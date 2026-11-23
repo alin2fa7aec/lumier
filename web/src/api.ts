@@ -11,9 +11,12 @@ export type ImageEntry = {
   v: string
   /// A video has no thumbnail renditions; only `orig` exists for it. A PDF
   /// hangs as a picture of its first page and opens in the browser's viewer.
-  kind: 'image' | 'video' | 'pdf'
+  kind: 'image' | 'video' | 'pdf' | 'markdown'
   /// Length in seconds, for videos.
   duration?: number
+  /// A note's first heading and opening text, for its card on the wall.
+  title?: string
+  excerpt?: string
   /// Marked for deletion: the nightly purge will move it to the trash.
   marked?: boolean
   /// In the trash and due to be put back by the next purge.
@@ -91,6 +94,23 @@ export async function fetchRoom(roomId: string, signal?: AbortSignal): Promise<R
     return { ...(await getJson<Room>('/api/trash', signal)), name: 'Trash' }
   }
   return getJson<Room>(`/api/rooms/${encodeURIComponent(roomId)}`, signal)
+}
+
+/// A note rendered on the server: sanitized HTML whose links point at files
+/// by id, as `/img/{id}/orig`.
+export function fetchNote(image: ImageEntry, signal?: AbortSignal): Promise<{ html: string }> {
+  return getJson<{ html: string }>(`/api/notes/${image.id}?v=${encodeURIComponent(image.v)}`, signal)
+}
+
+/// The id a rendered note's link points at, if it points at a file.
+export function linkedId(href: string): string | null {
+  const match = /^\/img\/([0-9a-f]{32})\//.exec(href)
+  return match === null ? null : match[1]
+}
+
+/// A note's title on its card: its first heading, else its file name.
+export function noteTitle(image: ImageEntry): string {
+  return image.title ?? image.name.replace(/\.(md|markdown)$/i, '')
 }
 
 async function send(method: 'PUT' | 'DELETE', url: string): Promise<void> {

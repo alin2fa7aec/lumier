@@ -4,6 +4,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import {
   formatDuration,
   imageUrl,
+  noteTitle,
   pickRendition,
   provenance,
   type Door,
@@ -161,11 +162,13 @@ export function Wall({
                     aria-label={
                       selecting
                         ? `Toggle mark on ${image.name}`
-                        : `${image.kind === 'video' ? 'Play' : 'Open'} ${image.name}`
+                        : `${image.kind === 'video' ? 'Play' : image.kind === 'markdown' ? 'Read' : 'Open'} ${image.name}`
                     }
                   >
                     {image.kind === 'video' ? (
                       <VideoFrame image={image} />
+                    ) : image.kind === 'markdown' ? (
+                      <NoteCard image={image} />
                     ) : (
                       <img
                         src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
@@ -220,6 +223,20 @@ function pack(images: ImageEntry[], layout: TierLayout): number[][] {
     shortest.length += layout.height * aspect + layout.gap
   })
   return bands.map((band) => band.items)
+}
+
+/// A note as it hangs on the wall: a portrait card with its title and
+/// opening lines. Its shape comes from the `w`/`h` the server gives every
+/// note, so it packs into the bands like a picture of that shape.
+function NoteCard({ image }: { image: ImageEntry }) {
+  return (
+    <span className="frame__note" style={{ aspectRatio: `${image.w} / ${image.h}` }}>
+      <span className="frame__note-title">{noteTitle(image)}</span>
+      {image.excerpt !== undefined && image.excerpt !== '' && (
+        <span className="frame__note-excerpt">{image.excerpt}</span>
+      )}
+    </span>
+  )
 }
 
 /// A video as it hangs on the wall: its opening frame, never playing, with a

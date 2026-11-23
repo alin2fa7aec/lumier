@@ -1,7 +1,15 @@
 import { ExternalLink, Play, Trash2, Undo2 } from 'lucide-react'
 import { useEffect, useRef, useState, type PointerEvent } from 'react'
 
-import { formatDuration, imageUrl, provenance, type ImageEntry, type Room } from './api'
+import {
+  fetchNote,
+  formatDuration,
+  imageUrl,
+  linkedId,
+  provenance,
+  type ImageEntry,
+  type Room,
+} from './api'
 
 /// How far a finger has to travel before the gesture commits to an axis. Below
 /// this a touch is still a tap.
@@ -30,6 +38,64 @@ type Gesture = { pointer: number; x: number; y: number; at: number; axis: 'x' | 
 /// Opens a PDF in a new tab, where the browser's own viewer shows it.
 function openDocument(image: ImageEntry): void {
   window.open(imageUrl(image, 'orig'), '_blank', 'noopener')
+}
+
+/// A note, rendered on the server, laid out for reading.
+///
+/// The HTML has already been sanitized there, which is what makes setting it
+/// directly safe. Its links all open a new tab; one leading to something else
+/// on this wall is caught here instead and moves the lightbox to it, so
+/// reading a note and looking at what it describes stay in one place.
+function NoteReader({
+  image,
+  room,
+  onMove,
+}: {
+  image: ImageEntry
+  room: Room
+  onMove: (index: number) => void
+}) {
+  const [note, setNote] = useState<{ id: string; html: string } | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+
+  useEffect(() => {
+    const controller = new AbortController()
+    fetchNote(image, controller.signal)
+      .then(({ html }) => setNote({ id: image.id, html }))
+      .catch((cause: unknown) => {
+        if (controller.signal.aborted) return
+        setFailed(cause instanceof Error ? cause.message : String(cause))
+      })
+    return () => controller.abort()
+  }, [image])
+
+  const html = note !== null && note.id === image.id ? note.html : null
+  return (
+    <article
+      className="lightbox__note"
+      onClick={(event) => {
+        event.stopPropagation()
+        const anchor = (event.target as HTMLElement).closest('a')
+        const id = anchor === null ? null : linkedId(anchor.getAttribute('href') ?? '')
+        if (id === null) return
+        const index = room.images.findIndex((entry) => entry.id === id)
+        // A PDF still goes to the browser's viewer; anything else on this
+        // wall opens here.
+        if (index >= 0 && room.images[index].kind !== 'pdf') {
+          event.preventDefault()
+          onMove(index)
+        }
+      }}
+    >
+      {failed !== null ? (
+        <p className="lightbox__note-error">{failed}</p>
+      ) : html === null ? (
+        <p className="lightbox__note-loading">Loading…</p>
+      ) : (
+        <div dangerouslySetInnerHTML={{ __html: html }} />
+      )}
+    </article>
+  )
 }
 
 /// One picture at full size.
@@ -142,7 +208,8 @@ export function Lightbox({
       return
     }
     // A video's own controls take the touch: scrubbing must not page away.
-    if ((event.target as HTMLElement).closest('video') !== null) return
+    // A note scrolls and selects under the finger, so it keeps it too.
+    if ((event.target as HTMLElement).closest('video, .lightbox__note') !== null) return
     // Zoomed in, a drag is for looking around the picture.
     if ((window.visualViewport?.scale ?? 1) > 1.01) return
     gesture.current = {
@@ -232,7 +299,9 @@ export function Lightbox({
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerCancel}
     >
-      {image.kind === 'pdf' ? (
+      {image.kind === 'markdown' ? (
+        <NoteReader key={image.id} image={image} room={room} onMove={onMove} />
+      ) : image.kind === 'pdf' ? (
         // The first page, large. Reading the document is the browser's job:
         // its viewer pages, searches and zooms, and drawing every page here
         // would mean shipping a PDF renderer to the client.
@@ -294,9 +363,10 @@ export function Lightbox({
           </span>
         )}
         <span>
-          {image.w}×{image.h}
-          {image.duration !== undefined && ` · ${formatDuration(image.duration)}`} · {index + 1} /{' '}
-          {room.images.length}
+          {/* A note's size is only the shape of its card. */}
+          {image.kind !== 'markdown' && `${image.w}×${image.h} · `}
+          {image.duration !== undefined && `${formatDuration(image.duration)} · `}
+          {index + 1} / {room.images.length}
         </span>
       </p>
       {onPlay !== undefined && (

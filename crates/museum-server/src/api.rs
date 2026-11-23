@@ -9,6 +9,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use museum_core::museum::{Door, Doors};
+use museum_core::note::{self, LinkIndex};
 use museum_core::{Date, ImageEntry, ImageId, Kind, Library, Museum, ThumbSize};
 
 use crate::marks::{self, MarkedPaths, Marking};
@@ -28,8 +29,11 @@ pub struct Snapshot {
     /// Current content version per image, so a request's `?v=` can be checked
     /// before the response is marked immutable.
     versions: HashMap<ImageId, String>,
-    /// Videos have no thumbnail: the client draws their frame itself.
-    videos: HashSet<ImageId>,
+    /// Entries with no thumbnail: a video's frame is drawn by the client,
+    /// and a note hangs as a card.
+    unthumbed: HashSet<ImageId>,
+    /// Every hung file by name, for resolving the links in notes.
+    links: LinkIndex,
     /// The trash, when deletion marks are enabled.
     pub(crate) trash: Option<TrashScan>,
 }
@@ -54,16 +58,22 @@ impl Snapshot {
             .flat_map(|trash| trash.days.iter().flat_map(|(_, images)| images));
         let all = || images.values().flatten().chain(trashed.clone());
         let versions = all().map(|image| (image.id, image.v.clone())).collect();
-        let videos = all()
-            .filter(|image| image.kind == Kind::Video)
+        let unthumbed = all()
+            .filter(|image| matches!(image.kind, Kind::Video | Kind::Markdown))
             .map(|image| image.id)
             .collect();
+        let links = LinkIndex::new(
+            images
+                .iter()
+                .map(|(room, entries)| (room.as_str(), entries.as_slice())),
+        );
         Self {
             library,
             museum,
             images,
             versions,
-            videos,
+            unthumbed,
+            links,
             trash,
         }
     }
@@ -205,6 +215,7 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/museum", get(museum))
         .route("/api/rooms/{room_id}", get(room))
         .route("/api/rescan", post(rescan))
+        .route("/api/notes/{image_id}", get(note_html))
         .route("/img/{image_id}/{size}", get(image))
         .merge(marks::routes())
         .with_state(state)
@@ -403,6 +414,49 @@ async fn room(State(state): State<Arc<AppState>>, Path(room_id): Path<String>) -
     .into_response()
 }
 
+#[derive(serde::Serialize)]
+struct NoteView {
+    /// The note as sanitized HTML, its links pointing at files by id.
+    html: String,
+}
+
+/// A note rendered for reading, with its links resolved from the room it
+/// hangs in.
+async fn note_html(State(state): State<Arc<AppState>>, Path(image_id): Path<String>) -> Response {
+    let Ok(image_id) = image_id.parse::<ImageId>() else {
+        return StatusCode::BAD_REQUEST.into_response();
+    };
+    let snapshot = state.current();
+    let Some(room) = snapshot.images.iter().find_map(|(room, entries)| {
+        entries
+            .iter()
+            .any(|entry| entry.id == image_id && entry.kind == Kind::Markdown)
+            .then(|| room.clone())
+    }) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Some(path) = snapshot.library.image_path(&image_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let rendered = tokio::task::spawn_blocking(move || {
+        let markdown = note::read(&path)?;
+        let rendered = note::render(&markdown, &|name| snapshot.links.resolve(name, &room));
+        Ok::<_, std::io::Error>(rendered.html)
+    })
+    .await;
+    match rendered {
+        Ok(Ok(html)) => Json(NoteView { html }).into_response(),
+        Ok(Err(error)) => {
+            tracing::error!(%image_id, %error, "cannot read note");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        Err(error) => {
+            tracing::error!(%image_id, %error, "note rendering failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
 /// Which rendition of an image to serve.
 enum Rendition {
     /// The source file, untouched. Wanted by the lightbox, not by the wall.
@@ -452,7 +506,7 @@ async fn image(
     let path = match rendition {
         Rendition::Original => source,
         Rendition::Thumb(size) => {
-            if snapshot.videos.contains(&image_id) {
+            if snapshot.unthumbed.contains(&image_id) {
                 return StatusCode::NOT_FOUND.into_response();
             }
             // The cache entry is keyed on the version of the file that is on

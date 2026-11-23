@@ -92,7 +92,10 @@ pub enum ThumbError {
 pub fn render(path: &Path, size: ThumbSize) -> Result<Vec<u8>, ThumbError> {
     // A PDF page is vector art, so it is drawn straight at the asked size
     // rather than decoded and scaled down.
-    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     if kind_of(name) == Some(Kind::Pdf) {
         let page = pdf::render_first_page(path, size.long_edge()).map_err(ThumbError::Pdf)?;
         return encode_webp(&image::DynamicImage::ImageRgb8(

@@ -47,6 +47,8 @@ pub struct Probe {
     pub taken: Option<i64>,
     /// When the file was last modified, in seconds since the epoch.
     pub modified: i64,
+    /// For a note, what its card on the wall shows.
+    pub card: Option<crate::note::Card>,
 }
 
 pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
@@ -85,6 +87,7 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         duration: None,
         taken,
         modified: modified_of(&metadata),
+        card: None,
     })
 }
 

@@ -9,7 +9,9 @@
 //
 // Each image carries a row of blocks matching its index, so the wall's sort
 // order is verifiable at a glance. One A4 PDF goes alongside, written by hand
-// the same way, so documents can be checked too.
+// the same way, and a Markdown note that links to it, embeds a picture and
+// carries one deliberately broken link, so documents and notes can be checked
+// too.
 
 import { deflateSync } from 'node:zlib'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -153,4 +155,28 @@ const pdfName = join(outDir, 'notes.pdf')
 writeFileSync(pdfName, encodePdf(`Notes from ${outDir.split('/').pop()}`))
 console.log(`${pdfName}  A4`)
 
-console.log(`\n${count} images and a PDF in ${outDir}`)
+const folder = outDir.split('/').pop()
+const noteName = join(outDir, 'about.md')
+writeFileSync(
+  noteName,
+  [
+    '---',
+    'tags: [sample]',
+    '---',
+    '',
+    `# About ${folder}`,
+    '',
+    `Sample pictures for checking lumier. The plan is in [[notes.pdf]], and the first picture is embedded below.`,
+    '',
+    '![[photo-01.png]]',
+    '',
+    '- [x] Hang the pictures',
+    '- [ ] Write more notes',
+    '',
+    'This link leads nowhere on purpose: [[missing.pdf]].',
+    '',
+  ].join('\n'),
+)
+console.log(`${noteName}  note`)
+
+console.log(`\n${count} images, a PDF and a note in ${outDir}`)

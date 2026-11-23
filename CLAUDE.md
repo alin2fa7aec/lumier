@@ -204,6 +204,7 @@ rather than a router dependency: the entire need is one path parameter plus an
 GET /api/museum             Floor plan: entrance, every room, image counts, cover
                             picture, and doors.
 GET /api/rooms/{room_id}    Room contents: images and the doors at each end.
+GET /api/notes/{image_id}   A note as sanitized HTML, links pointing at ids.
 POST /api/rescan            Re-read the manifest and rescan the library. 409
                             while one runs, 422 (details in the log only) if
                             the load fails.
@@ -235,7 +236,7 @@ wrong shape. The frontend puts them on the `<img>` width/height attributes,
 which is what gives the browser an intrinsic aspect ratio and keeps the wall
 from reflowing as pictures load.
 
-An entry also carries `kind` (`image` | `video` | `pdf`), and a video `duration` in
+An entry also carries `kind` (`image` | `video` | `pdf` | `markdown`), and a video `duration` in
 seconds. Videos (MP4/MOV) are probed by `museum_core::video`, which walks the
 ISO BMFF boxes for the `tkhd` size and matrix rather than calling `ffprobe`;
 a quarter-turn matrix swaps `w`/`h` just as EXIF orientation does. **A video
@@ -254,6 +255,17 @@ decoding and scaling. Parsing and drawing run under `catch_unwind`: a broken
 PDF costs its own thumbnail, not the scan. The lightbox shows the 2560
 rendition and opens `orig` in a new tab for the browser's own viewer. The
 slideshow skips PDFs, as it does videos.
+
+**A note hangs as a card and its links are resolved by file name.**
+`museum_core::note` gives the card a title and excerpt and a nominal
+300×400 shape, so it packs like a picture; like a video it has no thumbnail.
+`GET /api/notes/{id}` converts it with `comrak`, rewrites every link and
+embed on the syntax tree to `/img/{id}/…` through `LinkIndex` (names
+NFC-normalized and case-folded; the note's own room wins, else the name must
+be unique), and cleans the result with `ammonia` — the single place that
+decides which HTML survives, which is why comrak may pass raw HTML through.
+The browser therefore never sees a path, here either. A link that resolves
+nowhere keeps its text in `span.link--broken`, and `lumier check` lists it.
 
 **Only a matching `?v=` earns `Cache-Control: immutable`.** `v` is a short hash
 of (mtime, length). An absent or stale `v` falls back to ServeFile's ETag, which
