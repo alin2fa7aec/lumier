@@ -8,7 +8,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
-use api::AppState;
+use api::{AppState, Snapshot};
 use clap::{Args, Parser, Subcommand};
 use museum_core::{ImageEntry, Library, Manifest, Museum, museum};
 use tower_http::services::{ServeDir, ServeFile};
@@ -29,7 +29,7 @@ enum Command {
     Check(LibraryArgs),
 }
 
-#[derive(Args)]
+#[derive(Args, Clone)]
 struct LibraryArgs {
     /// Library root. Every path the server touches stays under it.
     #[arg(long)]
@@ -58,6 +58,12 @@ struct ServeArgs {
     /// demand. Defaults to $XDG_CACHE_HOME/lumier, else ~/.cache/lumier.
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+
+    /// Rescan the library and re-read the manifest every this many seconds,
+    /// so files added over SMB reach the walls without a restart. Off by
+    /// default; SIGHUP and `POST /api/rescan` rescan on demand either way.
+    #[arg(long, value_name = "SECS")]
+    rescan_interval: Option<u64>,
 }
 
 #[tokio::main]
@@ -155,6 +161,51 @@ fn scan_rooms(library: &mut Library, museum: &Museum) -> (HashMap<String, Vec<Im
     (images, unreadable)
 }
 
+/// Rescans on SIGHUP, which is what `systemctl reload` sends, and on a
+/// timer if one was asked for.
+fn spawn_rescan_triggers(state: &Arc<AppState>, interval: Option<u64>) -> anyhow::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+
+    let mut hangups = signal(SignalKind::hangup()).context("cannot listen for SIGHUP")?;
+    let on_hangup = Arc::clone(state);
+    tokio::spawn(async move {
+        while hangups.recv().await.is_some() {
+            log_rescan("SIGHUP", on_hangup.rescan().await);
+        }
+    });
+
+    if let Some(secs) = interval.filter(|&secs| secs > 0) {
+        let on_timer = Arc::clone(state);
+        tokio::spawn(async move {
+            let period = std::time::Duration::from_secs(secs);
+            let mut ticks = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+            // A scan that overruns the period should not be followed by a
+            // burst of catch-up scans.
+            ticks.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                ticks.tick().await;
+                log_rescan("timer", on_timer.rescan().await);
+            }
+        });
+    }
+    Ok(())
+}
+
+fn log_rescan(trigger: &str, result: Result<api::RescanReport, api::RescanError>) {
+    match result {
+        Ok(report) => tracing::info!(trigger, ?report, "rescanned"),
+        Err(api::RescanError::Busy) => {
+            tracing::info!(trigger, "rescan skipped: one is already running")
+        }
+        Err(api::RescanError::Load(error)) => {
+            tracing::error!(
+                trigger,
+                "rescan failed, keeping the previous museum: {error:#}"
+            );
+        }
+    }
+}
+
 fn bullets(lines: &[String]) -> String {
     lines
         .iter()
@@ -214,12 +265,20 @@ async fn serve(args: ServeArgs) -> anyhow::Result<ExitCode> {
     );
 
     let cache_dir = args.cache_dir.unwrap_or_else(thumbs::default_cache_dir);
+    let library_args = args.library.clone();
+    let loader: api::Loader = Box::new(move || {
+        let loaded = load(&library_args)?;
+        for warning in &loaded.warnings {
+            tracing::warn!("{warning}");
+        }
+        Ok(Snapshot::new(loaded.library, loaded.museum, loaded.images))
+    });
     let state = Arc::new(AppState::new(
-        loaded.library,
-        loaded.museum,
-        loaded.images,
+        Snapshot::new(loaded.library, loaded.museum, loaded.images),
+        loader,
         thumbs::Thumbnailer::new(cache_dir),
     ));
+    spawn_rescan_triggers(&state, args.rescan_interval)?;
 
     let mut app = api::routes(state).layer(TraceLayer::new_for_http());
     if let Some(web_dir) = &args.web_dir {

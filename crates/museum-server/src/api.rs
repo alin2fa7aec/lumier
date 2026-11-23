@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use axum::body::Body;
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::{Json, Router, routing::get};
+use axum::routing::{get, post};
+use axum::{Json, Router};
 use museum_core::museum::{Door, Doors};
 use museum_core::{ImageEntry, ImageId, Kind, Library, Museum, ThumbSize};
 
@@ -14,27 +15,24 @@ use crate::thumbs::Thumbnailer;
 use tower::ServiceExt;
 use tower_http::services::ServeFile;
 
-pub struct AppState {
-    pub library: Library,
-    pub museum: Museum,
+/// Everything one scan produced. Replaced whole on a rescan and never
+/// mutated, so a request that took a snapshot sees one consistent museum
+/// even while a rescan swaps in the next.
+pub struct Snapshot {
+    library: Library,
+    museum: Museum,
     /// Room id to the images hanging in it. Rooms with no folder of their own
     /// are simply absent.
-    pub images: HashMap<String, Vec<ImageEntry>>,
+    images: HashMap<String, Vec<ImageEntry>>,
     /// Current content version per image, so a request's `?v=` can be checked
     /// before the response is marked immutable.
     versions: HashMap<ImageId, String>,
     /// Videos have no thumbnail: the client draws their frame itself.
     videos: HashSet<ImageId>,
-    pub thumbs: Thumbnailer,
 }
 
-impl AppState {
-    pub fn new(
-        library: Library,
-        museum: Museum,
-        images: HashMap<String, Vec<ImageEntry>>,
-        thumbs: Thumbnailer,
-    ) -> Self {
+impl Snapshot {
+    pub fn new(library: Library, museum: Museum, images: HashMap<String, Vec<ImageEntry>>) -> Self {
         let versions = images
             .values()
             .flatten()
@@ -52,7 +50,6 @@ impl AppState {
             images,
             versions,
             videos,
-            thumbs,
         }
     }
 
@@ -68,12 +65,120 @@ impl AppState {
     }
 }
 
+/// Builds a fresh snapshot from disk: re-reads the manifest and rescans every
+/// room. Supplied by `main` so that a rescan goes through the same `load()`
+/// as startup and `check`.
+pub type Loader = Box<dyn Fn() -> anyhow::Result<Snapshot> + Send + Sync>;
+
+pub struct AppState {
+    /// The museum as of the last successful scan. The lock is held only long
+    /// enough to clone or replace the `Arc`, never across a scan or a request.
+    snapshot: RwLock<Arc<Snapshot>>,
+    loader: Loader,
+    /// Held for the length of a rescan, so two never run at once.
+    rescanning: tokio::sync::Mutex<()>,
+    /// Outlives every snapshot: its single-flight gates and semaphore must
+    /// keep working across a rescan.
+    pub thumbs: Thumbnailer,
+}
+
+/// Why a rescan did not replace the museum.
+#[derive(Debug, thiserror::Error)]
+pub enum RescanError {
+    #[error("a rescan is already running")]
+    Busy,
+    /// The manifest no longer builds, or the root cannot be opened. The
+    /// previous snapshot stays in service.
+    #[error(transparent)]
+    Load(#[from] anyhow::Error),
+}
+
+/// What a successful rescan found, for the log and the HTTP response.
+#[derive(Debug, serde::Serialize)]
+pub struct RescanReport {
+    pub rooms: usize,
+    pub images: usize,
+    pub scan_ms: u128,
+}
+
+impl AppState {
+    pub fn new(snapshot: Snapshot, loader: Loader, thumbs: Thumbnailer) -> Self {
+        Self {
+            snapshot: RwLock::new(Arc::new(snapshot)),
+            loader,
+            rescanning: tokio::sync::Mutex::new(()),
+            thumbs,
+        }
+    }
+
+    /// The current museum. Hold on to the returned `Arc` for the whole of a
+    /// request rather than calling this twice, or the two halves could come
+    /// from different scans.
+    fn current(&self) -> Arc<Snapshot> {
+        // A poisoned lock only means a writer panicked between two plain
+        // assignments; the Arc inside is still whole.
+        Arc::clone(&self.snapshot.read().unwrap_or_else(PoisonError::into_inner))
+    }
+
+    /// Re-reads the manifest and rescans the library, then swaps the result in.
+    ///
+    /// On failure the previous snapshot keeps serving: a manifest saved
+    /// half-edited must not empty the museum.
+    pub async fn rescan(self: &Arc<Self>) -> Result<RescanReport, RescanError> {
+        let Ok(_guard) = self.rescanning.try_lock() else {
+            return Err(RescanError::Busy);
+        };
+        let started = std::time::Instant::now();
+        let this = Arc::clone(self);
+        let snapshot = tokio::task::spawn_blocking(move || (this.loader)())
+            .await
+            .map_err(|error| anyhow::anyhow!("rescan task failed: {error}"))??;
+        let report = RescanReport {
+            rooms: snapshot.museum.rooms().len(),
+            images: snapshot.library.image_count(),
+            scan_ms: started.elapsed().as_millis(),
+        };
+        *self
+            .snapshot
+            .write()
+            .unwrap_or_else(PoisonError::into_inner) = Arc::new(snapshot);
+        Ok(report)
+    }
+}
+
 pub fn routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/api/museum", get(museum))
         .route("/api/rooms/{room_id}", get(room))
+        .route("/api/rescan", post(rescan))
         .route("/img/{image_id}/{size}", get(image))
         .with_state(state)
+}
+
+/// Picks up files added or removed since the last scan, and manifest edits.
+///
+/// Open to anyone who can reach the server, like everything else here: it
+/// changes nothing on disk, and the lock keeps repeated calls from piling up.
+async fn rescan(State(state): State<Arc<AppState>>) -> Response {
+    match state.rescan().await {
+        Ok(report) => {
+            tracing::info!(?report, "rescanned");
+            Json(report).into_response()
+        }
+        Err(RescanError::Busy) => {
+            (StatusCode::CONFLICT, "a rescan is already running\n").into_response()
+        }
+        Err(RescanError::Load(error)) => {
+            // The details name files under the root, which stay on the
+            // server like every other library path.
+            tracing::error!("rescan failed, keeping the previous museum: {error:#}");
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "rescan failed; the previous museum is still served. See the server log, or run `lumier check`.\n",
+            )
+                .into_response()
+        }
+    }
 }
 
 /// A door as the client sees it: where it leads, what the plaque says, and one
@@ -94,7 +199,7 @@ struct DoorsView<'a> {
     right: Vec<DoorView<'a>>,
 }
 
-fn door_view<'a>(state: &'a AppState, door: &'a Door) -> DoorView<'a> {
+fn door_view<'a>(state: &'a Snapshot, door: &'a Door) -> DoorView<'a> {
     DoorView {
         to: &door.to,
         name: &door.name,
@@ -102,7 +207,7 @@ fn door_view<'a>(state: &'a AppState, door: &'a Door) -> DoorView<'a> {
     }
 }
 
-fn doors_view<'a>(state: &'a AppState, doors: &'a Doors) -> DoorsView<'a> {
+fn doors_view<'a>(state: &'a Snapshot, doors: &'a Doors) -> DoorsView<'a> {
     DoorsView {
         left: doors.left.iter().map(|d| door_view(state, d)).collect(),
         right: doors.right.iter().map(|d| door_view(state, d)).collect(),
@@ -127,6 +232,7 @@ struct MuseumRoomView<'a> {
 
 /// The floor plan: every room and how they join, without any image lists.
 async fn museum(State(state): State<Arc<AppState>>) -> Response {
+    let state = state.current();
     let view = MuseumView {
         entrance: state.museum.entrance(),
         rooms: state
@@ -154,10 +260,11 @@ struct RoomView<'a> {
 }
 
 async fn room(State(state): State<Arc<AppState>>, Path(room_id): Path<String>) -> Response {
+    let state = state.current();
     let Some(room) = state.museum.room(&room_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    // Borrowing out of the Arc is fine here: `Json` serializes eagerly, so the
+    // Borrowing out of the snapshot is fine here: `Json` serializes eagerly, so the
     // borrow ends before the owned response is returned.
     Json(RoomView {
         id: &room.id,
@@ -209,20 +316,21 @@ async fn image(
     let Ok(rendition) = size.parse::<Rendition>() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let Some(source) = state.library.image_path(&image_id) else {
+    let snapshot = state.current();
+    let Some(source) = snapshot.library.image_path(&image_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
     let path = match rendition {
         Rendition::Original => source,
         Rendition::Thumb(size) => {
-            if state.videos.contains(&image_id) {
+            if snapshot.videos.contains(&image_id) {
                 return StatusCode::NOT_FOUND.into_response();
             }
             // The cache entry is keyed on the version of the file that is on
             // disk now, not on whatever `?v=` the client happened to send: a
             // stale query must never label a freshly rendered thumbnail.
-            let version = state
+            let version = snapshot
                 .versions
                 .get(&image_id)
                 .map_or_else(|| String::from("0"), Clone::clone);
@@ -249,7 +357,7 @@ async fn image(
     // falls back to ServeFile's ETag and Last-Modified, which revalidate — if
     // the id alone were marked immutable, a replaced file would be served from
     // cache forever.
-    let current = state.versions.get(&image_id);
+    let current = snapshot.versions.get(&image_id);
     if query.v.is_some() && query.v.as_deref() == current.map(String::as_str) {
         response
             .headers_mut()

@@ -85,7 +85,16 @@ cd web && npm run dev
 # Single process against a built frontend
 npm run build --prefix web
 cargo run --bin lumier -- serve --root sample-photos --manifest "$PWD/museum.sample.yaml" --web-dir web/dist
+
+# Nix: the package (binary plus built frontend) and the NixOS module
+nix build .#lumier              # result/bin/lumier, result/share/lumier/web
 ```
+
+The NAS imports `nix/module.nix` (also `nixosModules.default` in the flake) and
+sets `services.lumier.{enable,root,manifest,openFirewall}`. The unit sees the
+whole filesystem read-only apart from `/var/cache/lumier`, so the library
+cannot be written even by a compromised server. `systemctl reload lumier`
+rescans.
 
 `--manifest` is relative to `--root` unless absolute. `--cache-dir` holds
 rendered thumbnails and is safe to delete; it refills on demand.
@@ -134,6 +143,15 @@ refuse to build a graph; warnings (unreachable rooms, folders nobody hangs,
 two rooms on one folder) describe a graph that works but probably is not
 intended.
 
+**A rescan goes through the same `load()`**, and swaps in a whole new
+`Snapshot` (library index, room graph, images, versions) rather than editing
+the old one. Each request clones the `Arc<Snapshot>` once and uses only that,
+so it never mixes two scans. A load that fails (a half-edited manifest, say)
+leaves the previous snapshot serving. The `Thumbnailer` lives outside the
+snapshot, because its single-flight gates and semaphore must survive a swap.
+Rescans come from `POST /api/rescan`, SIGHUP, and `--rescan-interval`, and
+one lock keeps them from overlapping.
+
 **`rel_path` is `#[serde(skip)]`** on both `ImageEntry` and `museum::Room`. It
 must stay that way — it is the field that would leak library paths to the client.
 
@@ -163,6 +181,9 @@ rather than a router dependency: the entire need is one path parameter plus an
 GET /api/museum             Floor plan: entrance, every room, image counts, cover
                             picture, and doors.
 GET /api/rooms/{room_id}    Room contents: images and the doors at each end.
+POST /api/rescan            Re-read the manifest and rescan the library. 409
+                            while one runs, 422 (details in the log only) if
+                            the load fails.
 GET /img/{image_id}/{size}  Image bytes. `size` is 320|640|1280|2560 (WebP, long
                             edge) or `orig` (the source file, for the lightbox).
                             `?v=` from the room API marks the response immutable.

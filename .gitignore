@@ -4,3 +4,4 @@
 # Fixtures from tools/make-sample-images.mjs
 /sample-photos
 .local/
+/result
