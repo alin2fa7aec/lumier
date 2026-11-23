@@ -133,6 +133,11 @@ path segment, path traversal is not an input-validation problem here; it is not
 expressible. Keep it that way: do not add an endpoint that takes a path. This
 also means awkward filenames cost nothing — the library contains folders like
 `ubi/Assassin's Creed® Valhalla` and no URL-encoding question ever arises.
+The one exception is cosmetic: `/img/{id}/orig/{name}` carries the file's own
+name (never a directory) as a last segment, because browsers title a PDF tab
+after the end of its URL. The server never reads that segment — the file is
+found by id and the name need not match — so it stays no route to the
+filesystem; keep it that way.
 
 **`museum_core::path::resolve` is the only route to the filesystem.** It refuses
 absolute paths, refuses `.`/`..` segments, and — the actual guarantee —
@@ -215,6 +220,11 @@ GET /img/{image_id}/{size}  Image bytes. `size` is 320|640|1280|2560 (WebP, long
                             edge) or `orig` (the source file: videos, GIFs, and
                             "open the original" from the lightbox).
                             `?v=` from the room API marks the response immutable.
+GET /img/{image_id}/orig/{name}
+                            The original again, `name` ignored: the client puts
+                            the file name there for the tab title. Every
+                            original carries Content-Disposition: inline with
+                            the name in filename* (RFC 8187).
 PUT|DELETE /api/marks/{image_id}
                             Mark for deletion, or take the mark back. Only with
                             --state-dir/--trash-dir; PUT and DELETE from another

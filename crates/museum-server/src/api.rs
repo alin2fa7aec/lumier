@@ -217,6 +217,9 @@ pub fn routes(state: Arc<AppState>) -> Router {
         .route("/api/rescan", post(rescan))
         .route("/api/notes/{image_id}", get(note_html))
         .route("/img/{image_id}/{size}", get(image))
+        // The trailing name is for the browser alone: the tab title of a PDF
+        // and the default name when saving. The file is still found by id.
+        .route("/img/{image_id}/orig/{name}", get(named_original))
         .merge(marks::routes())
         .with_state(state)
 }
@@ -460,6 +463,36 @@ async fn note_html(State(state): State<Arc<AppState>>, Path(image_id): Path<Stri
     }
 }
 
+/// `Content-Disposition: inline` naming the file, so a viewer that reads it
+/// (Firefox's PDF viewer for the title, any browser for the name it saves
+/// under) shows the original name rather than `orig`.
+///
+/// The name goes in `filename*` (RFC 8187), percent-encoded UTF-8, which is
+/// how a non-ASCII name gets into a header at all. `filename` carries an ASCII
+/// stand-in for clients that know only the older parameter.
+fn inline_disposition(name: &str) -> HeaderValue {
+    let fallback: String = name
+        .chars()
+        .map(|c| match c {
+            ' ' | '!' | '#'..='[' | ']'..='~' => c,
+            _ => '_',
+        })
+        .collect();
+    let mut encoded = String::with_capacity(name.len());
+    for byte in name.bytes() {
+        // RFC 8187 attr-char: everything else is percent-encoded.
+        if byte.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    HeaderValue::try_from(format!(
+        "inline; filename=\"{fallback}\"; filename*=UTF-8''{encoded}"
+    ))
+    .unwrap_or_else(|_| HeaderValue::from_static("inline"))
+}
+
 /// Which rendition of an image to serve.
 enum Rendition {
     /// The source file, untouched. Wanted by the lightbox, not by the wall.
@@ -495,19 +528,49 @@ async fn image(
     Query(query): Query<ImageQuery>,
     request: Request,
 ) -> Response {
-    let Ok(image_id) = image_id.parse::<ImageId>() else {
-        return StatusCode::BAD_REQUEST.into_response();
-    };
     let Ok(rendition) = size.parse::<Rendition>() else {
         return StatusCode::NOT_FOUND.into_response();
+    };
+    serve_image(&state, &image_id, rendition, query, request).await
+}
+
+/// `/img/{id}/orig/{name}`: the original, with a file name on the end of the
+/// URL. Browsers title a PDF tab after the last segment of its URL when the
+/// document names no title of its own, and Content-Disposition alone does not
+/// reach every viewer. The name is never read: it neither finds the file nor
+/// has to match it, so it is no route to the filesystem.
+async fn named_original(
+    State(state): State<Arc<AppState>>,
+    Path((image_id, _name)): Path<(String, String)>,
+    Query(query): Query<ImageQuery>,
+    request: Request,
+) -> Response {
+    serve_image(&state, &image_id, Rendition::Original, query, request).await
+}
+
+async fn serve_image(
+    state: &AppState,
+    image_id: &str,
+    rendition: Rendition,
+    query: ImageQuery,
+    request: Request,
+) -> Response {
+    let Ok(image_id) = image_id.parse::<ImageId>() else {
+        return StatusCode::BAD_REQUEST.into_response();
     };
     let snapshot = state.current();
     let Some(source) = snapshot.source_path(&image_id) else {
         return StatusCode::NOT_FOUND.into_response();
     };
 
+    let mut disposition = None;
     let path = match rendition {
-        Rendition::Original => source,
+        Rendition::Original => {
+            disposition = source
+                .file_name()
+                .map(|name| inline_disposition(&name.to_string_lossy()));
+            source
+        }
         Rendition::Thumb(size) => {
             if snapshot.unthumbed.contains(&image_id) {
                 return StatusCode::NOT_FOUND.into_response();
@@ -542,6 +605,12 @@ async fn image(
     // falls back to ServeFile's ETag and Last-Modified, which revalidate — if
     // the id alone were marked immutable, a replaced file would be served from
     // cache forever.
+    if let Some(disposition) = disposition {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_DISPOSITION, disposition);
+    }
+
     let current = snapshot.versions.get(&image_id);
     if query.v.is_some() && query.v.as_deref() == current.map(String::as_str) {
         response
@@ -549,4 +618,26 @@ async fn image(
             .insert(header::CACHE_CONTROL, HeaderValue::from_static(IMMUTABLE));
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::inline_disposition;
+
+    #[test]
+    fn names_a_non_ascii_file_in_both_disposition_parameters() {
+        assert_eq!(
+            inline_disposition("旅行 案内.pdf"),
+            "inline; filename=\"__ __.pdf\"; \
+             filename*=UTF-8''%E6%97%85%E8%A1%8C%20%E6%A1%88%E5%86%85.pdf"
+        );
+    }
+
+    #[test]
+    fn keeps_quotes_and_backslashes_out_of_the_ascii_name() {
+        assert_eq!(
+            inline_disposition("a\"b\\c.pdf"),
+            "inline; filename=\"a_b_c.pdf\"; filename*=UTF-8''a%22b%5Cc.pdf"
+        );
+    }
 }
