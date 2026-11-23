@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use crate::library;
-use crate::manifest::{Manifest, SUPPORTED_VERSION, Side};
+use crate::manifest::{Manifest, Order, SUPPORTED_VERSION, Side};
 use crate::path as libpath;
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -47,6 +47,8 @@ pub struct Room {
     /// Never serialized — it would leak library paths to the client.
     #[serde(skip)]
     pub rel_path: Option<String>,
+    #[serde(skip)]
+    pub order: Order,
     pub doors: Doors,
 }
 
@@ -124,6 +126,7 @@ pub fn build(manifest: &Manifest, root: &Path) -> Result<Validated, Vec<String>>
             id: definition.id.clone(),
             name: definition.name.clone(),
             rel_path: definition.path.clone(),
+            order: definition.order,
             doors: Doors::default(),
         });
     }

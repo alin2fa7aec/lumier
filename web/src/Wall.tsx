@@ -1,5 +1,5 @@
 import { ChevronLeft, ChevronRight, Play, Trash2, Undo2 } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 
 import {
   formatDuration,
@@ -12,6 +12,7 @@ import {
 } from './api'
 import { enterRoom, type ArriveAt } from './route'
 import { recall, remember } from './scrollMemory'
+import type { TierLayout } from './useTierLayout'
 
 /// How far one arrow press moves, as a share of the viewport width.
 const STEP = 0.3
@@ -21,21 +22,24 @@ const EDGE_SLACK = 4
 
 /// One room rendered as a wall hung in tiers.
 ///
-/// Pictures fill a column top to bottom and then carry on rightwards, the way a
-/// salon hangs them, so the only scrolling is still sideways: reaching either
-/// end simply stops, and the doors stand at the two ends. How many tiers there
-/// are follows from the viewport height, decided in CSS.
+/// Each tier is a horizontal band, and each picture in turn goes into the
+/// band that is shortest so far, so pictures of every shape pack edge to edge
+/// with only the right-hand end left ragged. The order along the wall is
+/// therefore roughly, not strictly, left to right. The only scrolling is
+/// still sideways: reaching either end simply stops, and the doors stand at
+/// the two ends. How many tiers there are follows from the viewport, decided
+/// in CSS.
 export function Wall({
   room,
   arriveAt,
-  tierHeight,
+  tiers,
   keyboard,
   selecting,
   onOpenImage,
 }: {
   room: Room
   arriveAt: ArriveAt
-  tierHeight: number
+  tiers: TierLayout
   /// False while an overlay is up, so arrow keys do not scroll the wall
   /// underneath it.
   keyboard: boolean
@@ -45,6 +49,8 @@ export function Wall({
   onOpenImage: (index: number) => void
 }) {
   const wall = useRef<HTMLDivElement>(null)
+  const bands = useMemo(() => pack(room.images, tiers), [room.images, tiers])
+  const tierHeight = tiers.height
 
   // Place the visitor. One assignment is enough: every image carries its
   // dimensions, so the wall's full width is already laid out here, before
@@ -137,53 +143,77 @@ export function Wall({
       {/* The tiers are a grid of their own, so where the doors sit does not
           depend on how the pictures happen to flow into it. */}
       <div className="tiers">
-        {room.images.map((image, index) => (
-          <figure
-            className={`frame${image.marked ? ' frame--marked' : ''}${image.restore ? ' frame--restore' : ''}`}
-            key={image.id}
-          >
-            <button
-              type="button"
-              className="frame__button"
-              onClick={() => onOpenImage(index)}
-              title={provenance(image) ?? undefined}
-              aria-pressed={selecting ? Boolean(image.marked || image.restore) : undefined}
-              aria-label={
-                selecting
-                  ? `Toggle mark on ${image.name}`
-                  : `${image.kind === 'video' ? 'Play' : 'Open'} ${image.name}`
-              }
-            >
-              {image.kind === 'video' ? (
-                <VideoFrame image={image} />
-              ) : (
-                <img
-                  src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
-                  alt={image.name}
-                  width={image.w}
-                  height={image.h}
-                  loading="lazy"
-                  decoding="async"
-                  draggable={false}
-                />
-              )}
-              {image.marked && (
-                <span className="frame__mark" role="img" aria-label="Marked for deletion">
-                  <Trash2 aria-hidden="true" />
-                </span>
-              )}
-              {image.restore && (
-                <span className="frame__mark" role="img" aria-label="To be restored">
-                  <Undo2 aria-hidden="true" />
-                </span>
-              )}
-            </button>
-          </figure>
+        {bands.map((band, bandIndex) => (
+          <div className="band" key={bandIndex}>
+            {band.map((index) => {
+              const image = room.images[index]
+              return (
+                <figure
+                  className={`frame${image.marked ? ' frame--marked' : ''}${image.restore ? ' frame--restore' : ''}`}
+                  key={image.id}
+                >
+                  <button
+                    type="button"
+                    className="frame__button"
+                    onClick={() => onOpenImage(index)}
+                    title={provenance(image) ?? undefined}
+                    aria-pressed={selecting ? Boolean(image.marked || image.restore) : undefined}
+                    aria-label={
+                      selecting
+                        ? `Toggle mark on ${image.name}`
+                        : `${image.kind === 'video' ? 'Play' : 'Open'} ${image.name}`
+                    }
+                  >
+                    {image.kind === 'video' ? (
+                      <VideoFrame image={image} />
+                    ) : (
+                      <img
+                        src={imageUrl(image, pickRendition(image, tierHeight, window.devicePixelRatio))}
+                        alt={image.name}
+                        width={image.w}
+                        height={image.h}
+                        loading="lazy"
+                        decoding="async"
+                        draggable={false}
+                      />
+                    )}
+                    {image.marked && (
+                      <span className="frame__mark" role="img" aria-label="Marked for deletion">
+                        <Trash2 aria-hidden="true" />
+                      </span>
+                    )}
+                    {image.restore && (
+                      <span className="frame__mark" role="img" aria-label="To be restored">
+                        <Undo2 aria-hidden="true" />
+                      </span>
+                    )}
+                  </button>
+                </figure>
+              )
+            })}
+          </div>
         ))}
       </div>
       <DoorGroup doors={room.doors.right} side="right" />
     </div>
   )
+}
+
+/// Which pictures go in which band: each in turn into the band that is
+/// shortest so far, measured as drawn widths plus the gap after each. The
+/// first band wins a tie, so a short room fills from the top.
+function pack(images: ImageEntry[], layout: TierLayout): number[][] {
+  const bands = Array.from({ length: layout.tiers }, () => ({ length: 0, items: [] as number[] }))
+  images.forEach((image, index) => {
+    const aspect = image.h > 0 ? image.w / image.h : 1
+    let shortest = bands[0]
+    for (const band of bands) {
+      if (band.length < shortest.length) shortest = band
+    }
+    shortest.items.push(index)
+    shortest.length += layout.height * aspect + layout.gap
+  })
+  return bands.map((band) => band.items)
 }
 
 /// A video as it hangs on the wall: its opening frame, never playing, with a

@@ -22,7 +22,7 @@ mod testutil;
 pub use date::Date;
 pub use id::ImageId;
 pub use library::{ImageEntry, Kind, Library, ScanError, ScanStats};
-pub use manifest::{Manifest, ManifestError, Side};
+pub use manifest::{Manifest, ManifestError, Order, Side};
 pub use museum::{Door, Doors, Museum, Room, Validated};
 pub use path::PathError;
 pub use state::{Mark, State, StateDir, StateError};

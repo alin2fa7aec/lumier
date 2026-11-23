@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::id::ImageId;
+use crate::manifest::Order;
 use crate::path::{self, PathError};
 use crate::{probe, video};
 
@@ -145,7 +146,11 @@ impl Library {
     /// out before the pictures arrive without them. A file that cannot be
     /// probed is left off the wall rather than hung at a guessed size: it could
     /// not have been displayed either.
-    pub fn scan_room(&mut self, rel_dir: &str) -> Result<(Vec<ImageEntry>, ScanStats), ScanError> {
+    pub fn scan_room(
+        &mut self,
+        rel_dir: &str,
+        order: Order,
+    ) -> Result<(Vec<ImageEntry>, ScanStats), ScanError> {
         let dir = path::resolve(&self.root, rel_dir)?;
         let read = std::fs::read_dir(&dir).map_err(|source| ScanError::ReadDir {
             dir: dir.display().to_string(),
@@ -232,21 +237,35 @@ impl Library {
 
             let id = ImageId::for_rel_path(&format!("{}{rel_path}", self.namespace));
             self.index.insert(id, rel_path.clone());
-            entries.push(ImageEntry {
-                id,
-                name,
-                w: probed.width,
-                h: probed.height,
-                v: probed.version,
-                kind,
-                duration: probed.duration,
-                rel_path,
-            });
+            let when = match order {
+                Order::Name => 0,
+                Order::Mtime => probed.modified,
+                Order::Taken => probed.taken.unwrap_or(probed.modified),
+            };
+            entries.push((
+                when,
+                ImageEntry {
+                    id,
+                    name,
+                    w: probed.width,
+                    h: probed.height,
+                    v: probed.version,
+                    kind,
+                    duration: probed.duration,
+                    rel_path,
+                },
+            ));
         }
 
         // Natural order, so `img2` precedes `img10`. Plain lexicographic sorting
-        // scatters any numbered sequence, which is most of a photo library.
-        entries.sort_by(|a, b| natord::compare_ignore_case(&a.name, &b.name));
+        // scatters any numbered sequence, which is most of a photo library. By
+        // time, the name still breaks ties: a burst shares one second.
+        entries.sort_by(|(a_when, a), (b_when, b)| {
+            a_when
+                .cmp(b_when)
+                .then_with(|| natord::compare_ignore_case(&a.name, &b.name))
+        });
+        let entries: Vec<ImageEntry> = entries.into_iter().map(|(_, entry)| entry).collect();
         stats.hung = entries.len();
         Ok((entries, stats))
     }
@@ -323,6 +342,35 @@ mod tests {
         assert_eq!(kind_of("a.txt"), None);
         assert_eq!(kind_of("jpg"), None);
         assert_eq!(kind_of("a.jpg.txt"), None);
+    }
+
+    #[test]
+    fn orders_a_room_by_name_or_by_time() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let dir = crate::testutil::TempDir::new();
+        let room = dir.path().join("room");
+        std::fs::create_dir_all(&room).unwrap();
+        // Named in one order, modified in another.
+        for (name, secs) in [("a.png", 2_000), ("b.png", 3_000), ("c.png", 1_000)] {
+            let path = room.join(name);
+            image::RgbImage::new(1, 1).save(&path).unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .unwrap()
+                .set_modified(UNIX_EPOCH + Duration::from_secs(secs))
+                .unwrap();
+        }
+        let mut library = Library::open(dir.path()).unwrap();
+        let mut names = |order| -> Vec<String> {
+            let (entries, _) = library.scan_room("room", order).unwrap();
+            entries.into_iter().map(|entry| entry.name).collect()
+        };
+        assert_eq!(names(Order::Name), ["a.png", "b.png", "c.png"]);
+        assert_eq!(names(Order::Mtime), ["c.png", "a.png", "b.png"]);
+        // Nothing here carries EXIF, so taken falls back to the mtime.
+        assert_eq!(names(Order::Taken), ["c.png", "a.png", "b.png"]);
     }
 
     #[test]

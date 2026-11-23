@@ -10,7 +10,7 @@ use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use crate::probe::{Probe, ProbeError, version_of};
+use crate::probe::{Probe, ProbeError, modified_of, version_of};
 
 #[derive(Debug, thiserror::Error)]
 pub enum VideoError {
@@ -37,6 +37,8 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         height: movie.height,
         version: version_of(&metadata),
         duration: movie.duration,
+        taken: movie.created,
+        modified: modified_of(&metadata),
     })
 }
 
@@ -48,6 +50,9 @@ pub(crate) struct Movie {
     pub height: u32,
     /// Length in seconds, when the movie header states one.
     pub duration: Option<f64>,
+    /// When it was recorded, in UTC seconds since the epoch, when the movie
+    /// header states it.
+    pub created: Option<i64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -131,9 +136,12 @@ pub(crate) fn read_movie<R: Read + Seek>(reader: &mut R, len: u64) -> Result<Mov
     let moov = *find(&top, b"moov").ok_or(VideoError::NoMovie)?;
     let in_moov = children(reader, moov.body, moov.end)?;
 
-    let duration = match find(&in_moov, b"mvhd") {
-        Some(&mvhd) => movie_duration(&read_body(reader, mvhd, 32)?),
-        None => None,
+    let (duration, created) = match find(&in_moov, b"mvhd") {
+        Some(&mvhd) => {
+            let body = read_body(reader, mvhd, 32)?;
+            (movie_duration(&body), movie_created(&body))
+        }
+        None => (None, None),
     };
 
     for trak in in_moov.iter().filter(|header| &header.kind == b"trak") {
@@ -149,6 +157,7 @@ pub(crate) fn read_movie<R: Read + Seek>(reader: &mut R, len: u64) -> Result<Mov
                 width,
                 height,
                 duration,
+                created,
             });
         }
     }
@@ -196,6 +205,21 @@ fn movie_duration(mvhd: &[u8]) -> Option<f64> {
     Some(duration as f64 / f64::from(timescale))
 }
 
+/// Seconds from the movie epoch, 1904-01-01 UTC, to the Unix one.
+const MOVIE_EPOCH_OFFSET: i64 = 2_082_844_800;
+
+/// `mvhd`: the creation time, in seconds since 1904. Zero means unset, as
+/// does a time before 1970, which no recording made on a phone can have.
+fn movie_created(mvhd: &[u8]) -> Option<i64> {
+    let since_1904 = match mvhd.first()? {
+        0 => u64::from(be32(mvhd, 4)?),
+        1 => be64(mvhd, 4)?,
+        _ => return None,
+    };
+    let unix = i64::try_from(since_1904).ok()? - MOVIE_EPOCH_OFFSET;
+    (unix > 0).then_some(unix)
+}
+
 /// `tkhd`: the presentation size, turned by the transformation matrix.
 ///
 /// A phone filming upright records a landscape frame and a matrix that rotates
@@ -240,7 +264,12 @@ mod tests {
     }
 
     fn mvhd(timescale: u32, duration: u32) -> Vec<u8> {
+        mvhd_created(timescale, duration, 0)
+    }
+
+    fn mvhd_created(timescale: u32, duration: u32, since_1904: u32) -> Vec<u8> {
         let mut body = vec![0u8; 100];
+        body[4..8].copy_from_slice(&since_1904.to_be_bytes());
         body[12..16].copy_from_slice(&timescale.to_be_bytes());
         body[16..20].copy_from_slice(&duration.to_be_bytes());
         boxed(b"mvhd", &body)
@@ -291,9 +320,25 @@ mod tests {
             Movie {
                 width: 1920,
                 height: 1080,
-                duration: Some(90.5)
+                duration: Some(90.5),
+                created: None,
             }
         );
+    }
+
+    #[test]
+    fn reads_the_creation_time_from_the_movie_epoch() {
+        // 2026-11-24 00:00:00 UTC is 1795478400 in Unix time.
+        let since_1904 = u32::try_from(1_795_478_400 + MOVIE_EPOCH_OFFSET).unwrap();
+        let file = boxed(
+            b"moov",
+            &[
+                mvhd_created(600, 600, since_1904),
+                trak(b"vide", tkhd(1920, 1080, false)),
+            ]
+            .concat(),
+        );
+        assert_eq!(movie(&file).unwrap().created, Some(1_795_478_400));
     }
 
     #[test]

@@ -48,6 +48,24 @@ pub struct RoomDef {
     /// that only connects other rooms — a lobby or a corridor.
     #[serde(default)]
     pub path: Option<String>,
+    /// How the room's pictures are ordered along the wall.
+    #[serde(default)]
+    pub order: Order,
+}
+
+/// How a room's pictures are ordered.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Order {
+    /// By file name, naturally: `img2` before `img10`.
+    #[default]
+    Name,
+    /// By when the file was last modified, oldest first.
+    Mtime,
+    /// By when the picture was taken, oldest first: EXIF for a photo, the
+    /// movie header for a video, the modification time for anything that
+    /// states neither.
+    Taken,
 }
 
 /// A door, written once as the edge it is.
@@ -150,12 +168,25 @@ doors:
 
     #[test]
     fn rejects_unknown_keys() {
-        // `order` belongs to a later stage; accepting and ignoring it would be
-        // worse than refusing it.
+        // A key parsed but not honoured is worse than one refused.
         let error =
-            Manifest::parse("version: 1\nentrance: a\nrooms: [{id: a, name: A, order: mtime}]\n")
+            Manifest::parse("version: 1\nentrance: a\nrooms: [{id: a, name: A, sort: mtime}]\n")
                 .unwrap_err();
-        assert!(error.to_string().contains("order"), "{error}");
+        assert!(error.to_string().contains("sort"), "{error}");
+    }
+
+    #[test]
+    fn reads_the_order_and_defaults_to_name() {
+        let manifest = Manifest::parse(
+            "version: 1\nentrance: a\nrooms: [{id: a, name: A, order: taken}, {id: b, name: B}]\n",
+        )
+        .unwrap();
+        assert_eq!(manifest.rooms[0].order, Order::Taken);
+        assert_eq!(manifest.rooms[1].order, Order::Name);
+        assert!(
+            Manifest::parse("version: 1\nentrance: a\nrooms: [{id: a, name: A, order: exif}]\n")
+                .is_err()
+        );
     }
 
     #[test]

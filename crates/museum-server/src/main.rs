@@ -11,7 +11,7 @@ use std::sync::Arc;
 use anyhow::Context;
 use api::{AppState, Snapshot, TrashScan};
 use clap::{Args, Parser, Subcommand};
-use museum_core::{Date, ImageEntry, Library, Manifest, Museum, StateDir, museum, purge};
+use museum_core::{Date, ImageEntry, Library, Manifest, Museum, Order, StateDir, museum, purge};
 use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
@@ -198,7 +198,7 @@ fn scan_rooms(library: &mut Library, museum: &Museum) -> (HashMap<String, Vec<Im
         let Some(rel_path) = &room.rel_path else {
             continue;
         };
-        match library.scan_room(rel_path) {
+        match library.scan_room(rel_path, room.order) {
             Ok((entries, stats)) => {
                 unreadable += stats.unreadable;
                 images.insert(room.id.clone(), entries);
@@ -295,7 +295,7 @@ fn scan_trash(dir: &Path) -> Option<TrashScan> {
         dirs.sort_by(|a, b| natord::compare_ignore_case(a, b));
         let mut entries = Vec::new();
         for rel_dir in dirs {
-            match library.scan_room(&rel_dir) {
+            match library.scan_room(&rel_dir, Order::Name) {
                 Ok((found, _)) => entries.extend(found),
                 Err(error) => tracing::error!(%rel_dir, %error, "cannot scan the trash"),
             }

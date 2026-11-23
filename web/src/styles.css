@@ -7,13 +7,13 @@
   /* A picture marked for deletion. */
   --mark: #a05671;
 
-  /* The wall is hung in tiers: pictures fill a column top to bottom, then
-     carry on rightwards. Only `--tiers` changes with the viewport; the tier
-     height falls out of it, and `useTierHeight` measures the result rather
-     than restating it, because the rendition each picture needs follows from
-     it. */
+  /* The wall is hung in tiers, one horizontal band each, and each picture
+     goes into whichever band is shortest so far. Only `--tiers` changes with
+     the viewport; the tier height falls out of it, and `useTierLayout`
+     measures the result rather than restating it, because both the packing
+     and the rendition each picture needs follow from it. */
   --tiers: 3;
-  --tier-gap: 0.75rem;
+  --tier-gap: 4rem;
   --wall-height: 84dvh;
   /* Height is what normally sets the scale, but a tier also has to be short
      enough that a landscape picture fits across a narrow screen: at 16:9 the
@@ -86,15 +86,21 @@ body {
     var(--ground);
 }
 
-/* Column-major, which is what keeps the only scrolling sideways: a column is
-   as tall as the wall, so nothing ever overflows downwards. */
+/* One horizontal band per tier, stacked. Which picture goes in which band is
+   decided in JS (Wall.tsx), each into the band that is shortest so far, so
+   pictures of any shape pack edge to edge and the only ragged edge is the
+   right-hand end. The wall is never taller than its tiers, so the only
+   scrolling stays sideways. */
 .tiers {
   flex: none;
-  display: grid;
-  grid-auto-flow: column;
-  grid-template-rows: repeat(var(--tiers), var(--tier-height));
-  grid-auto-columns: max-content;
-  justify-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--tier-gap);
+}
+
+.band {
+  height: var(--tier-height);
+  display: flex;
   align-items: center;
   gap: var(--tier-gap);
 }
@@ -105,12 +111,14 @@ body {
   line-height: 0;
 }
 
-/* Measured by useTierHeight; never seen. */
+/* Measured by useTierLayout; never seen. Its width is the tier count in
+   pixels and its margin the gap, so all three read back as lengths. */
 .tier-probe {
   position: fixed;
   top: 0;
   left: 0;
-  width: 0;
+  width: calc(var(--tiers) * 1px);
+  margin-left: var(--tier-gap);
   height: var(--tier-height);
   visibility: hidden;
   pointer-events: none;

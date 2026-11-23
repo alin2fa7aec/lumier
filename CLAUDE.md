@@ -279,18 +279,23 @@ cache without bound. **Which one to request is chosen in JS, not with
 `srcset`/`sizes`** — `sizes` can only describe a width, and this layout is
 height-driven, so the drawn width follows from `--tier-height` and the image's
 aspect ratio. `--tier-height` in CSS is the single source of truth and
-`useTierHeight` measures it with a hidden probe element, because
+`useTierLayout` measures it (with `--tiers` and `--tier-gap`) through a hidden
+probe element, because
 `getComputedStyle` returns a custom property's unevaluated token stream rather
 than a pixel value.
 
 ### The tiered wall
 
-Pictures fill a column top to bottom and then carry on rightwards, so **a
-column is never taller than the wall and the only scrolling stays sideways** —
-which is what keeps the doors, the position memory and the keyboard working
-unchanged. The wall is a flex row of `[left doors][tier grid][right doors]`,
-with the tier grid separate so door placement does not depend on how pictures
-flow into it.
+Each tier is a horizontal band, and `pack` in `Wall.tsx` puts each picture
+in turn into **the band that is shortest so far**, measured from the API's
+`w`/`h` before any pixels arrive. Pictures of any shape then pack edge to
+edge and only the right-hand end is ragged; the bands never outgrow the wall,
+so **the only scrolling stays sideways** — which is what keeps the doors, the
+position memory and the keyboard working unchanged. The price is order:
+pictures run roughly, not strictly, left to right, and the lightbox still steps
+through them in the room's own order. The wall is a flex row of
+`[left doors][bands][right doors]`, with the bands separate so door placement
+does not depend on how pictures flow into them.
 
 Only `--tiers` varies with the viewport; `--tier-height` falls out of it. **The
 tier height is capped by `40vw` as well as by height**, and that cap is not
@@ -299,11 +304,10 @@ tier on a 390px-wide phone makes every picture 405px wide and nothing fits at
 all. Narrow screens then have height going spare, so a `max-width: 600px` query
 hangs more tiers; it comes last so it wins over the height queries.
 
-Column width is `max-content` — the widest picture in that column. With uniform
-aspect ratios the columns pack tightly (measured 98% fill on `ss/myst`); with
-mixed ones they do not (59% on the deliberately-varied fixtures, where a
-portrait shares a column with a panorama). Fine for this library, so it is left
-alone; a mixed photo library would want per-column packing instead.
+The bands replaced a column-major grid whose columns were as wide as their
+widest picture. On the deliberately mixed fixtures that filled 59% of the wall
+at four tiers, against 81% for the bands (64% against 91% at three), the rest
+being the ragged right end of rooms of a dozen pictures.
 
 ### Where the visitor lands
 
@@ -349,8 +353,11 @@ open, a header read and a stat — four round trips minimum. See `docs/design.md
 §6.2 for what stage 7 does about it (persistence, parallelism, and revisiting
 the per-file `canonicalize`).
 
-Ordering is natural and case-insensitive via `natord::compare_ignore_case`, so
-`img2` precedes `img10`. This is load-bearing for real libraries: the Valhalla
+A room's `order:` is `name` (the default), `mtime` or `taken`. By name,
+ordering is natural and case-insensitive via `natord::compare_ignore_case`, so
+`img2` precedes `img10`. `taken` reads EXIF `DateTimeOriginal` (with its
+`OffsetTimeOriginal`, else as UTC) and a video's `mvhd` creation time, and
+falls back to the mtime; the name breaks ties in both time orders. This is load-bearing for real libraries: the Valhalla
 screenshots in `ss/` are named `...2022-8-3-...` and `...2022-8-11-...`, which
 lexicographic sorting puts in the wrong chronological order.
 
@@ -363,6 +370,5 @@ The cache has no eviction. It grows until deleted; an LRU is listed under
 starting point and a poor curation — the design doc's own advice is not to put
 rooms that far apart. Reordering the `doors` list is all it takes to reshape.
 
-`order:` is deliberately *not* in the manifest schema yet, and
-`deny_unknown_fields` will reject it: a field parsed but not honoured is worse
-than one refused.
+`deny_unknown_fields` stays on every manifest struct: a field parsed but not
+honoured is worse than one refused.

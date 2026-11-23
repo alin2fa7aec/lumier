@@ -8,6 +8,8 @@ use std::io::{BufReader, Seek, SeekFrom};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
+use crate::date::Date;
+
 #[derive(Debug, thiserror::Error)]
 pub enum ProbeError {
     #[error("cannot open: {0}")]
@@ -37,6 +39,11 @@ pub struct Probe {
     pub version: String,
     /// Length in seconds. Only videos have one.
     pub duration: Option<f64>,
+    /// When it was taken, in seconds since the epoch, UTC. From EXIF for a
+    /// photo and the movie header for a video; absent when neither says.
+    pub taken: Option<i64>,
+    /// When the file was last modified, in seconds since the epoch.
+    pub modified: i64,
 }
 
 pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
@@ -46,7 +53,9 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
     // One open serves both reads. Opening twice would double the round trips
     // on a network mount, where the scan is latency-bound.
     let mut reader = BufReader::new(file);
-    let orientation = read_orientation(&mut reader);
+    let exif = exif::Reader::new().read_from_container(&mut reader).ok();
+    let orientation = exif.as_ref().and_then(orientation_of);
+    let taken = exif.as_ref().and_then(taken_of);
     reader
         .seek(SeekFrom::Start(0))
         .map_err(ProbeError::Rewind)?;
@@ -71,6 +80,8 @@ pub fn probe(path: &Path) -> Result<Probe, ProbeError> {
         height,
         version: version_of(&metadata),
         duration: None,
+        taken,
+        modified: modified_of(&metadata),
     })
 }
 
@@ -81,10 +92,58 @@ fn turns_quarter(orientation: Option<u32>) -> bool {
 }
 
 pub(crate) fn read_orientation<R: std::io::BufRead + Seek>(reader: &mut R) -> Option<u32> {
-    let exif = exif::Reader::new().read_from_container(reader).ok()?;
+    orientation_of(&exif::Reader::new().read_from_container(reader).ok()?)
+}
+
+fn orientation_of(exif: &exif::Exif) -> Option<u32> {
     exif.get_field(exif::Tag::Orientation, exif::In::PRIMARY)?
         .value
         .get_uint(0)
+}
+
+/// When the photo was taken, as UTC seconds.
+///
+/// EXIF stores the time as the camera's local clock reading, with the zone in
+/// a separate offset tag that phones write and many older cameras do not.
+/// Without one the reading is taken as UTC: photos from one camera still
+/// sort among themselves, but against a video (whose header is UTC) they can
+/// be off by the zone's offset.
+fn taken_of(exif: &exif::Exif) -> Option<i64> {
+    let pairs = [
+        (exif::Tag::DateTimeOriginal, exif::Tag::OffsetTimeOriginal),
+        (exif::Tag::DateTimeDigitized, exif::Tag::OffsetTimeDigitized),
+    ];
+    pairs.iter().find_map(|&(time, offset)| {
+        let mut taken = exif::DateTime::from_ascii(ascii_of(exif, time)?).ok()?;
+        if let Some(offset) = ascii_of(exif, offset) {
+            // A malformed offset leaves the reading as it is, taken as UTC.
+            let _ = taken.parse_offset(offset);
+        }
+        let date = Date::from_ymd(
+            i64::from(taken.year),
+            u32::from(taken.month),
+            u32::from(taken.day),
+        )?;
+        let clock =
+            i64::from(taken.hour) * 3600 + i64::from(taken.minute) * 60 + i64::from(taken.second);
+        let offset = i64::from(taken.offset.unwrap_or(0)) * 60;
+        Some(date.unix_seconds() + clock - offset)
+    })
+}
+
+fn ascii_of(exif: &exif::Exif, tag: exif::Tag) -> Option<&[u8]> {
+    match &exif.get_field(tag, exif::In::PRIMARY)?.value {
+        exif::Value::Ascii(parts) => parts.first().map(Vec::as_slice),
+        _ => None,
+    }
+}
+
+pub(crate) fn modified_of(metadata: &std::fs::Metadata) -> i64 {
+    metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+        .map_or(0, |since| since.as_secs() as i64)
 }
 
 pub(crate) fn version_of(metadata: &std::fs::Metadata) -> String {
@@ -183,6 +242,49 @@ mod tests {
         // A half turn does not swap the axes either.
         let probed = probe_bytes("halfturn", &jpeg_with_orientation(3, 100, 50));
         assert_eq!((probed.width, probed.height), (100, 50));
+    }
+
+    /// EXIF holding the given ASCII fields, through the crate's own writer.
+    fn exif_with(fields: &[(exif::Tag, &str)]) -> exif::Exif {
+        let fields: Vec<exif::Field> = fields
+            .iter()
+            .map(|&(tag, text)| exif::Field {
+                tag,
+                ifd_num: exif::In::PRIMARY,
+                value: exif::Value::Ascii(vec![text.as_bytes().to_vec()]),
+            })
+            .collect();
+        let mut writer = exif::experimental::Writer::new();
+        for field in &fields {
+            writer.push_field(field);
+        }
+        let mut tiff = std::io::Cursor::new(Vec::new());
+        writer.write(&mut tiff, false).unwrap();
+        exif::Reader::new().read_raw(tiff.into_inner()).unwrap()
+    }
+
+    #[test]
+    fn reads_when_a_photo_was_taken_in_its_own_zone() {
+        let exif = exif_with(&[
+            (exif::Tag::DateTimeOriginal, "2026:11:24 09:30:00"),
+            (exif::Tag::OffsetTimeOriginal, "+09:00"),
+        ]);
+        // 00:30 UTC that day.
+        assert_eq!(taken_of(&exif), Some(1_795_478_400 + 30 * 60));
+    }
+
+    #[test]
+    fn takes_a_reading_without_a_zone_as_utc() {
+        let exif = exif_with(&[(exif::Tag::DateTimeOriginal, "2026:11:24 09:30:00")]);
+        assert_eq!(taken_of(&exif), Some(1_795_478_400 + 9 * 3600 + 30 * 60));
+    }
+
+    #[test]
+    fn falls_back_to_the_digitized_time_and_ignores_a_blank_one() {
+        let exif = exif_with(&[(exif::Tag::DateTimeDigitized, "2026:11:24 00:00:00")]);
+        assert_eq!(taken_of(&exif), Some(1_795_478_400));
+        let exif = exif_with(&[(exif::Tag::DateTimeOriginal, "0000:00:00 00:00:00")]);
+        assert_eq!(taken_of(&exif), None);
     }
 
     #[test]

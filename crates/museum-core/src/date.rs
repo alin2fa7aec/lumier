@@ -30,6 +30,11 @@ impl Date {
         Some(Self(days_from_civil(year, month, day)))
     }
 
+    /// Seconds since the epoch at the start of this day, UTC.
+    pub fn unix_seconds(self) -> i64 {
+        self.0 * 86_400
+    }
+
     /// Whole days from `earlier` to `self`.
     pub fn days_since(self, earlier: Date) -> i64 {
         self.0 - earlier.0

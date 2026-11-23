@@ -16,7 +16,7 @@ import { FloorPlan } from './FloorPlan'
 import { Lightbox } from './Lightbox'
 import { jumpToRoom, replaceRoom, useRoute } from './route'
 import { Slideshow, type Position } from './Slideshow'
-import { useTierHeight } from './useTierHeight'
+import { useTierLayout } from './useTierLayout'
 import { Wall } from './Wall'
 
 /// What is covering the wall, if anything. Only one at a time, which is also
@@ -34,7 +34,7 @@ type Overlay =
 
 export default function App() {
   const route = useRoute()
-  const tierHeight = useTierHeight()
+  const tiers = useTierLayout()
   const [museum, setMuseum] = useState<Museum | null>(null)
   // The room is stored with the id it was fetched for, so staleness after a
   // navigation is derived during render rather than cleared from an effect.
@@ -198,7 +198,7 @@ export default function App() {
   // The tier height decides which rendition each picture needs, so the wall
   // waits for the first measurement rather than fetching at a guessed size.
   // That measurement happens before paint, so nothing is visibly delayed.
-  if (room === null || tierHeight === null) {
+  if (room === null || tiers === null) {
     return <p className="notice">Loading…</p>
   }
 
@@ -207,7 +207,7 @@ export default function App() {
       <Wall
         room={room}
         arriveAt={route.arriveAt}
-        tierHeight={tierHeight}
+        tiers={tiers}
         keyboard={showing === null}
         selecting={selectingHere}
         onOpenImage={
