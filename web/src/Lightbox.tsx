@@ -35,9 +35,16 @@ export type MarkControl = {
 
 type Gesture = { pointer: number; x: number; y: number; at: number; axis: 'x' | 'y' | null }
 
-/// Opens a PDF in a new tab, where the browser's own viewer shows it.
-function openDocument(image: ImageEntry): void {
+/// Opens the source file in a new tab: a PDF in the browser's own viewer, a
+/// picture at its full resolution.
+function openOriginal(image: ImageEntry): void {
   window.open(imageUrl(image, 'orig'), '_blank', 'noopener')
+}
+
+/// A GIF is shown from its source: the renditions are stills, and would stop
+/// an animation on its first frame.
+function isGif(image: ImageEntry): boolean {
+  return /\.gif$/i.test(image.name)
 }
 
 /// A note, rendered on the server, laid out for reading.
@@ -100,9 +107,12 @@ function NoteReader({
 
 /// One picture at full size.
 ///
-/// Deliberately fetches `orig` rather than the largest rendition: this is the
-/// one place the visitor has asked to see the actual file, and it is a single
-/// deliberate request rather than a wall's worth.
+/// A picture is shown from its 2560 rendition, not the source file. A camera
+/// JPEG runs to several megabytes, which a phone pays for every picture it
+/// steps through, and a HEIC would not display outside Safari at all
+/// (`docs/design.md` §6.6). The source stays one button (or Enter) away, in a
+/// new tab, for looking at it at full resolution. A GIF keeps its source so
+/// it still moves.
 ///
 /// On touch screens a swipe sideways moves between pictures and a swipe up or
 /// down closes, alongside the close button and the backdrop tap. The mouse is
@@ -159,8 +169,8 @@ export function Lightbox({
           mark.onToggle()
           break
         case 'Enter':
-          if (image?.kind !== 'pdf') return
-          openDocument(image)
+          if (image === undefined || (image.kind !== 'pdf' && image.kind !== 'image')) return
+          openOriginal(image)
           break
         default:
           return
@@ -319,7 +329,7 @@ export function Lightbox({
           title="Open the PDF (Enter)"
           onClick={(event) => {
             event.stopPropagation()
-            openDocument(image)
+            openOriginal(image)
           }}
         />
       ) : image.kind === 'video' ? (
@@ -346,7 +356,7 @@ export function Lightbox({
           // no transform from the swipe that brought it here lingers.
           key={image.id}
           className={pictureClass}
-          src={imageUrl(image, 'orig')}
+          src={imageUrl(image, isGif(image) ? 'orig' : 2560)}
           alt={image.name}
           width={image.w}
           height={image.h}
@@ -384,17 +394,17 @@ export function Lightbox({
           <Play aria-hidden="true" />
         </button>
       )}
-      {image.kind === 'pdf' && (
+      {(image.kind === 'pdf' || image.kind === 'image') && (
         <button
           type="button"
           className="lightbox__close lightbox__open"
           onClick={(event) => {
             event.stopPropagation()
-            openDocument(image)
+            openOriginal(image)
           }}
-          aria-label="Open the PDF"
+          aria-label={image.kind === 'pdf' ? 'Open the PDF' : 'Open the original'}
           aria-keyshortcuts="Enter"
-          title="Open the PDF (Enter)"
+          title={image.kind === 'pdf' ? 'Open the PDF (Enter)' : 'Open the original (Enter)'}
         >
           <ExternalLink aria-hidden="true" />
         </button>

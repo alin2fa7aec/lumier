@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 An image viewer for a NAS-hosted photo library, browsed over HTTP. Folders are
 modelled as a graph of museum rooms; each room is one wall hung in tiers and
 scrolled sideways, with doors at its left and right ends leading to adjacent
-rooms. Clicking a picture opens the original over the top of it.
+rooms. Clicking a picture opens it large over the top of the wall.
 
 Three documents, each with one job — keep them that way rather than letting them
 overlap:
@@ -209,7 +209,8 @@ POST /api/rescan            Re-read the manifest and rescan the library. 409
                             while one runs, 422 (details in the log only) if
                             the load fails.
 GET /img/{image_id}/{size}  Image bytes. `size` is 320|640|1280|2560 (WebP, long
-                            edge) or `orig` (the source file, for the lightbox).
+                            edge) or `orig` (the source file: videos, GIFs, and
+                            "open the original" from the lightbox).
                             `?v=` from the room API marks the response immutable.
 PUT|DELETE /api/marks/{image_id}
                             Mark for deletion, or take the mark back. Only with

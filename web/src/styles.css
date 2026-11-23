@@ -301,7 +301,8 @@ body {
   color: var(--error);
 }
 
-/* Left of the mark button: opens a PDF in the browser's own viewer. */
+/* Left of the mark button: opens the source file in a new tab, a PDF in the
+   browser's own viewer, a picture at full resolution. */
 .lightbox__open {
   inset: 1rem 10rem auto auto;
 }
